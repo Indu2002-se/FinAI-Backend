@@ -42,6 +42,13 @@ public class OpenApiConfig {
                         new Server()
                                 .url("https://api.finai.com")
                                 .description("Production Server")
-                ));
+                ))
+                .components(new io.swagger.v3.oas.models.Components()
+                        .addSecuritySchemes("bearerAuth", 
+                                new io.swagger.v3.oas.models.security.SecurityScheme()
+                                        .type(io.swagger.v3.oas.models.security.SecurityScheme.Type.HTTP)
+                                        .scheme("bearer")
+                                        .bearerFormat("JWT")
+                                        .description("JWT authentication token")));
     }
 }
