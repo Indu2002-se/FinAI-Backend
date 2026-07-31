@@ -18,3 +18,5 @@ Initialize the Spring Boot backend following the project architecture.
 - Swagger UI is accessible
 - MySQL connection is successful
 - Docker configuration added
+
+do not create any md files
