@@ -1,7 +1,4 @@
-
-
-do not create any md files
-You are a senior Spring Boot architect.
+You are a senior Spring Boot software engineer.
 
 Follow the project's copilot-instructions.md exactly.
 
@@ -13,15 +10,14 @@ Current Status:
 Completed:
 
 - Spring Boot Foundation
-- MySQL Configuration
+- MySQL
 - Docker
 - Swagger
 - Health Check API
-- User Entity
-- Role Entity
-- RoleType Enum
-- UserRepository
-- RoleRepository
+- Authentication Module (JWT)
+- User & Role
+- Security Configuration
+- User Onboarding Wizard Module
 
 Do NOT regenerate existing code.
 
@@ -29,208 +25,73 @@ Do NOT regenerate existing code.
 
 TASK
 
-Implement the complete Authentication module.
+Implement the User Onboarding Wizard module only.
 
-Generate ONLY production-ready code.
+Generate ONLY:
 
-Implement the following:
+1. WizardProfile entity
 
-1. DTOs
+Fields:
 
-Request DTOs
+- id
+- user (OneToOne with User)
+- monthlyIncome
+- monthlyExpense
+- savingsGoal
+- financialKnowledgeLevel
+- employmentStatus
+- preferredCurrency
+- createdAt
+- updatedAt
 
-- LoginRequest
-- RegisterRequest
+2. DTOs
 
-Response DTOs
+- WizardRequest
+- WizardResponse
 
-- AuthenticationResponse
-- UserResponse
+3. Repository
 
-======================================================
-
-2. Service Layer
-
-AuthenticationService interface
-
-AuthenticationServiceImpl
+- WizardProfileRepository
 
 Methods:
 
-register()
+- findByUserId(Long userId)
+- existsByUserId(Long userId)
 
-login()
+4. Service
 
-getCurrentUser()
+WizardService
 
-======================================================
+Methods:
 
-3. Security Configuration
+- saveWizard()
+- getWizard()
+- updateWizard()
 
-Spring Security Configuration
+5. Controller
 
-SecurityFilterChain
+Endpoints:
 
-PasswordEncoder
+POST /api/v1/wizard
 
-AuthenticationManager
+GET /api/v1/wizard
 
-Cors Configuration
+PUT /api/v1/wizard
 
-Stateless Session
-
-Disable CSRF
-
-======================================================
-
-4. JWT
-
-Implement
-
-JwtService
-
-Methods
-
-generateToken()
-
-extractUsername()
-
-isTokenValid()
-
-extractExpiration()
-
-extractClaims()
-
-Generate secure JWT tokens.
-
-======================================================
-
-5. JWT Filter
-
-JwtAuthenticationFilter
-
-Validate JWT
-
-Authenticate user
-
-Populate SecurityContext
-
-======================================================
-
-6. UserDetails
-
-CustomUserDetailsService
-
-Load user by email.
-
-======================================================
-
-7. Controllers
-
-AuthenticationController
-
-Endpoints
-
-POST /api/v1/auth/register
-
-POST /api/v1/auth/login
-
-GET /api/v1/auth/me
-
-======================================================
-
-8. Validation
+6. Validation
 
 Use Jakarta Validation.
 
-Validate:
-
-Email
-
-Password
-
-First Name
-
-Last Name
+7. Swagger documentation
 
 ======================================================
 
-9. Exception Handling
+Rules
 
-AuthenticationException
-
-GlobalExceptionHandler
-
-Meaningful error responses.
-
-======================================================
-
-10. Password Encryption
-
-Use BCryptPasswordEncoder.
-
-Never store plain passwords.
-
-======================================================
-
-11. Swagger
-
-Document all authentication endpoints.
-
-======================================================
-
-12. Architecture Rules
-
-Controller
-
-↓
-
-Service
-
-↓
-
-Repository
-
-Never place business logic inside controllers.
-
-Never expose entities directly.
-
-Always use DTOs.
-
-======================================================
-
-13. Do NOT implement
-
-Google Authentication
-
-Refresh Tokens
-
-Forgot Password
-
-Email Verification
-
-Role Management APIs
-
-Child APIs
-
-Wizard APIs
-
-Financial APIs
-
-AI APIs
-
-======================================================
-
-Generate every class separately.
-
-Generate production-ready enterprise code.
-
-Follow SOLID principles.
-
-Use constructor injection.
-
-Use Lombok.
-
-Follow Spring Boot best practices.
-
-Do not modify existing User and Role entities.
+- Use DTOs only.
+- Never expose entities.
+- Controller → Service → Repository architecture.
+- Associate wizard data with the authenticated user.
+- Do not implement Income, Expense, Budget, Reports, Child Profile or AI features.
+- Generate production-ready code only.
+- Follow SOLID principles.
