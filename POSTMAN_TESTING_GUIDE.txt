@@ -293,3 +293,248 @@ COMMON ISSUES:
    - Check password meets requirements
 
 =====================================
+
+
+=====================================
+WIZARD MODULE TESTING
+=====================================
+
+Prerequisites:
+- You must be logged in (have a valid JWT token)
+- Use the token from login/register response
+
+=====================================
+TEST 5: CREATE WIZARD PROFILE
+=====================================
+
+Method: POST
+URL: http://localhost:8080/api/v1/wizard
+
+Headers:
+Content-Type: application/json
+Authorization: Bearer <YOUR_TOKEN>
+
+Body (raw JSON):
+{
+  "monthlyIncome": 5000.00,
+  "monthlyExpense": 3000.00,
+  "savingsGoal": 10000.00,
+  "financialKnowledgeLevel": "INTERMEDIATE",
+  "employmentStatus": "EMPLOYED",
+  "preferredCurrency": "USD"
+}
+
+Financial Knowledge Levels:
+- BEGINNER
+- INTERMEDIATE
+- ADVANCED
+- EXPERT
+
+Employment Status Options:
+- EMPLOYED
+- SELF_EMPLOYED
+- UNEMPLOYED
+- STUDENT
+- RETIRED
+
+Currency Codes (ISO 4217):
+- USD (US Dollar)
+- EUR (Euro)
+- GBP (British Pound)
+- LKR (Sri Lankan Rupee)
+- INR (Indian Rupee)
+- etc.
+
+Expected Response (201 Created):
+{
+  "success": true,
+  "message": "Wizard profile created successfully",
+  "data": {
+    "id": 1,
+    "userId": 1,
+    "monthlyIncome": 5000.00,
+    "monthlyExpense": 3000.00,
+    "savingsGoal": 10000.00,
+    "financialKnowledgeLevel": "INTERMEDIATE",
+    "employmentStatus": "EMPLOYED",
+    "preferredCurrency": "USD",
+    "createdAt": "2026-08-01T...",
+    "updatedAt": "2026-08-01T..."
+  },
+  "timestamp": "2026-08-01T..."
+}
+
+=====================================
+TEST 6: GET WIZARD PROFILE
+=====================================
+
+Method: GET
+URL: http://localhost:8080/api/v1/wizard
+
+Headers:
+Authorization: Bearer <YOUR_TOKEN>
+
+Expected Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "userId": 1,
+    "monthlyIncome": 5000.00,
+    "monthlyExpense": 3000.00,
+    "savingsGoal": 10000.00,
+    "financialKnowledgeLevel": "INTERMEDIATE",
+    "employmentStatus": "EMPLOYED",
+    "preferredCurrency": "USD",
+    "createdAt": "2026-08-01T...",
+    "updatedAt": "2026-08-01T..."
+  },
+  "timestamp": "2026-08-01T..."
+}
+
+If wizard profile not found (404):
+{
+  "timestamp": "2026-08-01T...",
+  "status": 404,
+  "error": "Not Found",
+  "message": "Wizard profile not found",
+  "path": "/api/v1/wizard"
+}
+
+=====================================
+TEST 7: UPDATE WIZARD PROFILE
+=====================================
+
+Method: PUT
+URL: http://localhost:8080/api/v1/wizard
+
+Headers:
+Content-Type: application/json
+Authorization: Bearer <YOUR_TOKEN>
+
+Body (raw JSON):
+{
+  "monthlyIncome": 6000.00,
+  "monthlyExpense": 3500.00,
+  "savingsGoal": 15000.00,
+  "financialKnowledgeLevel": "ADVANCED",
+  "employmentStatus": "EMPLOYED",
+  "preferredCurrency": "USD"
+}
+
+Expected Response (200 OK):
+{
+  "success": true,
+  "message": "Wizard profile updated successfully",
+  "data": {
+    "id": 1,
+    "userId": 1,
+    "monthlyIncome": 6000.00,
+    "monthlyExpense": 3500.00,
+    "savingsGoal": 15000.00,
+    "financialKnowledgeLevel": "ADVANCED",
+    "employmentStatus": "EMPLOYED",
+    "preferredCurrency": "USD",
+    "createdAt": "2026-08-01T...",
+    "updatedAt": "2026-08-01T..." (updated timestamp)
+  },
+  "timestamp": "2026-08-01T..."
+}
+
+=====================================
+WIZARD VALIDATION ERRORS:
+=====================================
+
+1. MONTHLY EXPENSE > MONTHLY INCOME:
+   Body: monthlyExpense = 6000, monthlyIncome = 5000
+   Expected: 400 Bad Request
+   {
+     "message": "Monthly expense cannot be greater than monthly income"
+   }
+
+2. NEGATIVE VALUES:
+   Body: monthlyIncome = -1000
+   Expected: 400 Bad Request
+   {
+     "validationErrors": {
+       "monthlyIncome": "Monthly income must be greater than 0"
+     }
+   }
+
+3. INVALID CURRENCY CODE:
+   Body: preferredCurrency = "US" (only 2 chars)
+   Expected: 400 Bad Request
+   {
+     "validationErrors": {
+       "preferredCurrency": "Currency code must be 3 characters (ISO 4217)"
+     }
+   }
+
+4. MISSING REQUIRED FIELDS:
+   Body: {} (empty)
+   Expected: 400 Bad Request
+   {
+     "validationErrors": {
+       "monthlyIncome": "Monthly income is required",
+       "monthlyExpense": "Monthly expense is required",
+       ...
+     }
+   }
+
+5. CREATE WIZARD TWICE:
+   Create wizard profile, then try to create again
+   Expected: 400 Bad Request
+   {
+     "message": "Wizard profile already exists. Use update endpoint instead."
+   }
+
+6. UNAUTHORIZED ACCESS:
+   No token or invalid token
+   Expected: 401 Unauthorized
+
+=====================================
+COMPLETE TESTING FLOW:
+=====================================
+
+1. Register User:
+   POST /api/v1/auth/register
+   Save the token
+
+2. Create Wizard Profile:
+   POST /api/v1/wizard (with token)
+
+3. Get Wizard Profile:
+   GET /api/v1/wizard (with token)
+
+4. Update Wizard Profile:
+   PUT /api/v1/wizard (with token)
+
+5. Verify in Database:
+   mysql -u finai_user -p finai_dev
+   SELECT * FROM wizard_profiles;
+
+=====================================
+MYSQL VERIFICATION:
+=====================================
+
+Connect to MySQL:
+mysql -u finai_user -p finai_dev
+Password: finai_password
+
+Check wizard profiles:
+SELECT * FROM wizard_profiles;
+SELECT wp.*, u.email FROM wizard_profiles wp JOIN users u ON wp.user_id = u.id;
+
+Expected columns:
+- id
+- user_id
+- monthly_income
+- monthly_expense
+- savings_goal
+- financial_knowledge_level
+- employment_status
+- preferred_currency
+- created_at
+- updated_at
+
+=====================================
