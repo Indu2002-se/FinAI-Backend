@@ -15,12 +15,14 @@ import lombok.NoArgsConstructor;
 public class AuthenticationResponse {
 
     private String token;
+    private String refreshToken;
     private String type;
     private UserResponse user;
 
     public static AuthenticationResponse of(String token, UserResponse user) {
         return AuthenticationResponse.builder()
                 .token(token)
+                .refreshToken(token)
                 .type("Bearer")
                 .user(user)
                 .build();

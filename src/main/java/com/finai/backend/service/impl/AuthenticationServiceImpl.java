@@ -47,7 +47,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
 
         // Get default user role
         Role userRole = roleRepository.findByName(RoleType.ROLE_USER)
-                .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Default user role not found in database"));
 
         // Create user
         User user = User.builder()
