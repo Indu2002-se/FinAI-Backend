@@ -26,6 +26,7 @@ public class UserResponse {
     private String provider;
     private Boolean enabled;
     private Boolean emailVerified;
+    private Boolean profileComplete;
     private Set<String> roles;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

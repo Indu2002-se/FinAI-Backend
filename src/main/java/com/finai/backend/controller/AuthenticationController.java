@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.*;
  * Handles user registration, login, and profile endpoints
  */
 @RestController
-@RequestMapping("/api/v1/auth")
+@RequestMapping("/api/auth")
 @RequiredArgsConstructor
 @Tag(name = "Authentication", description = "Authentication management endpoints")
 public class AuthenticationController {
@@ -54,5 +54,17 @@ public class AuthenticationController {
     public ResponseEntity<ApiResponse<UserResponse>> getCurrentUser() {
         UserResponse response = authenticationService.getCurrentUser();
         return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @PostMapping("/logout")
+    @Operation(
+            summary = "User logout", 
+            description = "Logout current user (JWT is stateless, client should discard token)",
+            security = @SecurityRequirement(name = "bearerAuth")
+    )
+    public ResponseEntity<ApiResponse<Void>> logout() {
+        // Since JWT is stateless, logout is handled on client side by discarding the token
+        // This endpoint is provided for consistency with mobile app expectations
+        return ResponseEntity.ok(ApiResponse.success("Logout successful", null));
     }
 }

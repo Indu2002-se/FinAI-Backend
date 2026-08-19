@@ -50,6 +50,10 @@ public class User extends BaseEntity {
     @Builder.Default
     private Boolean emailVerified = false;
 
+    @Column(name = "profile_complete", nullable = false)
+    @Builder.Default
+    private Boolean profileComplete = false;
+
     @ManyToMany(fetch = FetchType.EAGER, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
     @JoinTable(
             name = "user_roles",

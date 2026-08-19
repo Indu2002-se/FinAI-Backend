@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.*;
  * Handles user onboarding wizard endpoints
  */
 @RestController
-@RequestMapping("/api/v1/wizard")
+@RequestMapping("/api/wizard")
 @RequiredArgsConstructor
 @Tag(name = "Wizard", description = "User onboarding wizard management endpoints")
 @SecurityRequirement(name = "bearerAuth")

@@ -29,6 +29,7 @@ public class UserMapper {
                 .provider(user.getProvider())
                 .enabled(user.getEnabled())
                 .emailVerified(user.getEmailVerified())
+                .profileComplete(user.getProfileComplete())
                 .roles(user.getRoles().stream()
                         .map(Role::getName)
                         .map(Enum::name)
