@@ -7,5 +7,7 @@ package com.finai.backend.entity.enums;
 public enum RoleType {
     ROLE_USER,
     ROLE_ADMIN,
-    ROLE_MODERATOR
+    ROLE_MODERATOR,
+    ROLE_MAIN_USER,
+    ROLE_CHILD
 }

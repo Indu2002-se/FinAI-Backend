@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.*;
  * Handles user registration, login, and profile endpoints
  */
 @RestController
-@RequestMapping("/api/auth")
+@RequestMapping({"/api/auth", "/api/v1/auth"})
 @RequiredArgsConstructor
 @Tag(name = "Authentication", description = "Authentication management endpoints")
 public class AuthenticationController {
