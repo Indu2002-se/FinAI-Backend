@@ -1,22 +1,97 @@
-## Objective
+You are a senior Spring Boot software engineer.
 
-Initialize the Spring Boot backend following the project architecture.
+Follow the project's copilot-instructions.md exactly.
 
-## Tasks
+Project:
+FinAI Backend
 
-- Configure project structure
-- Configure application.properties
-- Configure Spring Profiles
-- Configure Swagger
-- Configure Docker support
-- Configure MySQL connection
-- Verify application startup
+Current Status:
 
-## Acceptance Criteria
+Completed:
 
-- Application starts successfully
-- Swagger UI is accessible
-- MySQL connection is successful
-- Docker configuration added
+- Spring Boot Foundation
+- MySQL
+- Docker
+- Swagger
+- Health Check API
+- Authentication Module (JWT)
+- User & Role
+- Security Configuration
+- User Onboarding Wizard Module
 
-do not create any md files
+Do NOT regenerate existing code.
+
+======================================================
+
+TASK
+
+Implement the User Onboarding Wizard module only.
+
+Generate ONLY:
+
+1. WizardProfile entity
+
+Fields:
+
+- id
+- user (OneToOne with User)
+- monthlyIncome
+- monthlyExpense
+- savingsGoal
+- financialKnowledgeLevel
+- employmentStatus
+- preferredCurrency
+- createdAt
+- updatedAt
+
+2. DTOs
+
+- WizardRequest
+- WizardResponse
+
+3. Repository
+
+- WizardProfileRepository
+
+Methods:
+
+- findByUserId(Long userId)
+- existsByUserId(Long userId)
+
+4. Service
+
+WizardService
+
+Methods:
+
+- saveWizard()
+- getWizard()
+- updateWizard()
+
+5. Controller
+
+Endpoints:
+
+POST /api/v1/wizard
+
+GET /api/v1/wizard
+
+PUT /api/v1/wizard
+
+6. Validation
+
+Use Jakarta Validation.
+
+7. Swagger documentation
+
+======================================================
+
+Rules
+
+- Use DTOs only.
+- Never expose entities.
+- Controller → Service → Repository architecture.
+- Associate wizard data with the authenticated user.
+- Do not implement Income, Expense, Budget, Reports, Child Profile or AI features.
+- Generate production-ready code only.
+- Follow SOLID principles.

@@ -1,0 +1,540 @@
+FinAI Backend - Postman Testing Guide
+=====================================
+
+SETUP:
+------
+1. Start MySQL: scripts\start-mysql.bat
+2. Run Application: gradlew.bat bootRun
+3. Wait for "Started BackendApplication" message
+4. Base URL: http://localhost:8080
+
+=====================================
+TEST 1: REGISTER NEW USER
+=====================================
+
+Method: POST
+URL: http://localhost:8080/api/v1/auth/register
+
+Headers:
+Content-Type: application/json
+
+Body (raw JSON):
+{
+  "firstName": "John",
+  "lastName": "Doe",
+  "email": "john.doe@example.com",
+  "password": "Password123",
+  "phoneNumber": "1234567890"
+}
+
+Expected Response (201 Created):
+{
+  "success": true,
+  "message": "User registered successfully",
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "type": "Bearer",
+    "user": {
+      "id": 1,
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john.doe@example.com",
+      "phoneNumber": "1234567890",
+      "profileImage": null,
+      "provider": "LOCAL",
+      "enabled": true,
+      "emailVerified": false,
+      "roles": ["ROLE_USER"],
+      "createdAt": "2026-08-01T...",
+      "updatedAt": "2026-08-01T..."
+    }
+  },
+  "timestamp": "2026-08-01T..."
+}
+
+IMPORTANT: Copy the "token" value for next requests!
+
+=====================================
+TEST 2: LOGIN
+=====================================
+
+Method: POST
+URL: http://localhost:8080/api/v1/auth/login
+
+Headers:
+Content-Type: application/json
+
+Body (raw JSON):
+{
+  "email": "john.doe@example.com",
+  "password": "Password123"
+}
+
+Expected Response (200 OK):
+{
+  "success": true,
+  "message": "Login successful",
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "type": "Bearer",
+    "user": {
+      "id": 1,
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john.doe@example.com",
+      ...
+    }
+  },
+  "timestamp": "2026-08-01T..."
+}
+
+=====================================
+TEST 3: GET CURRENT USER (Protected)
+=====================================
+
+Method: GET
+URL: http://localhost:8080/api/v1/auth/me
+
+Headers:
+Authorization: Bearer <YOUR_TOKEN_HERE>
+
+Example:
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJqb2huLmRvZUBleGFtcGxlLmNvbSIsImlhdCI6MTcyMjUxMjAwMCwiZXhwIjoxNzIyNTk4NDAwfQ.abc123...
+
+Expected Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "firstName": "John",
+    "lastName": "Doe",
+    "email": "john.doe@example.com",
+    "phoneNumber": "1234567890",
+    "profileImage": null,
+    "provider": "LOCAL",
+    "enabled": true,
+    "emailVerified": false,
+    "roles": ["ROLE_USER"],
+    "createdAt": "2026-08-01T...",
+    "updatedAt": "2026-08-01T..."
+  },
+  "timestamp": "2026-08-01T..."
+}
+
+If token is missing or invalid (401 Unauthorized):
+{
+  "timestamp": "2026-08-01T...",
+  "status": 401,
+  "error": "Unauthorized",
+  "message": "Full authentication is required to access this resource",
+  "path": "/api/v1/auth/me"
+}
+
+=====================================
+TEST 4: HEALTH CHECK
+=====================================
+
+Method: GET
+URL: http://localhost:8080/api/health
+
+No headers needed
+
+Expected Response (200 OK):
+{
+  "success": true,
+  "message": "Application is healthy",
+  "data": {
+    "status": "UP",
+    "application": "finai-backend",
+    "profile": "dev",
+    "timestamp": "2026-08-01T..."
+  },
+  "timestamp": "2026-08-01T..."
+}
+
+=====================================
+ERROR SCENARIOS TO TEST:
+=====================================
+
+1. REGISTER WITH EXISTING EMAIL:
+   Body: Same email as registered user
+   Expected: 400 Bad Request
+   {
+     "timestamp": "...",
+     "status": 400,
+     "error": "Bad Request",
+     "message": "Email already registered",
+     "path": "/api/v1/auth/register"
+   }
+
+2. LOGIN WITH WRONG PASSWORD:
+   Body: Correct email, wrong password
+   Expected: 401 Unauthorized
+   {
+     "timestamp": "...",
+     "status": 401,
+     "error": "Unauthorized",
+     "message": "Invalid email or password",
+     "path": "/api/v1/auth/login"
+   }
+
+3. REGISTER WITH WEAK PASSWORD:
+   Body: password = "123"
+   Expected: 400 Bad Request
+   {
+     "timestamp": "...",
+     "status": 400,
+     "error": "Bad Request",
+     "message": "Validation failed",
+     "path": "/api/v1/auth/register",
+     "validationErrors": {
+       "password": "Password must be at least 8 characters long"
+     }
+   }
+
+4. REGISTER WITH INVALID EMAIL:
+   Body: email = "notanemail"
+   Expected: 400 Bad Request
+   {
+     "validationErrors": {
+       "email": "Invalid email format"
+     }
+   }
+
+5. ACCESS PROTECTED ENDPOINT WITHOUT TOKEN:
+   GET /api/v1/auth/me (no Authorization header)
+   Expected: 401 Unauthorized
+
+=====================================
+POSTMAN TIPS:
+=====================================
+
+1. Create a Collection called "FinAI API"
+
+2. Create an Environment:
+   - Name: FinAI Dev
+   - Variables:
+     * baseUrl = http://localhost:8080
+     * token = (will be set automatically)
+
+3. Use Variables in Requests:
+   - URL: {{baseUrl}}/api/v1/auth/register
+   - Authorization: Bearer {{token}}
+
+4. Auto-save token after login:
+   In Tests tab of Login request, add:
+   ```javascript
+   var jsonData = pm.response.json();
+   pm.environment.set("token", jsonData.data.token);
+   ```
+
+5. Pre-request script for Authorization:
+   In Authorization tab, select "Bearer Token"
+   Token: {{token}}
+
+=====================================
+SWAGGER UI ALTERNATIVE:
+=====================================
+
+You can also test via Swagger UI:
+URL: http://localhost:8080/swagger-ui.html
+
+1. Open Swagger UI
+2. Find "Authentication" section
+3. Click on endpoint to expand
+4. Click "Try it out"
+5. Fill in request body
+6. Click "Execute"
+7. For /me endpoint:
+   - First click "Authorize" button (top right)
+   - Enter: Bearer <your-token>
+   - Click "Authorize"
+   - Then test /me endpoint
+
+=====================================
+MYSQL VERIFICATION:
+=====================================
+
+Connect to MySQL to verify data:
+mysql -u finai_user -p finai_dev
+Password: finai_password
+
+Commands:
+SHOW TABLES;
+SELECT * FROM users;
+SELECT * FROM roles;
+SELECT * FROM user_roles;
+
+Expected tables:
+- users
+- roles
+- user_roles
+
+=====================================
+COMMON ISSUES:
+=====================================
+
+1. Connection refused:
+   - Make sure MySQL is running
+   - Check: docker ps
+
+2. Application not starting:
+   - Check: gradlew.bat bootRun
+   - Look for errors in console
+
+3. 401 Unauthorized on /me:
+   - Check token format: "Bearer <token>"
+   - Token might be expired (valid for 24 hours)
+   - Login again to get new token
+
+4. Validation errors:
+   - Check request body format
+   - Ensure all required fields are present
+   - Check password meets requirements
+
+=====================================
+
+
+=====================================
+WIZARD MODULE TESTING
+=====================================
+
+Prerequisites:
+- You must be logged in (have a valid JWT token)
+- Use the token from login/register response
+
+=====================================
+TEST 5: CREATE WIZARD PROFILE
+=====================================
+
+Method: POST
+URL: http://localhost:8080/api/v1/wizard
+
+Headers:
+Content-Type: application/json
+Authorization: Bearer <YOUR_TOKEN>
+
+Body (raw JSON):
+{
+  "monthlyIncome": 5000.00,
+  "monthlyExpense": 3000.00,
+  "savingsGoal": 10000.00,
+  "financialKnowledgeLevel": "INTERMEDIATE",
+  "employmentStatus": "EMPLOYED",
+  "preferredCurrency": "USD"
+}
+
+Financial Knowledge Levels:
+- BEGINNER
+- INTERMEDIATE
+- ADVANCED
+- EXPERT
+
+Employment Status Options:
+- EMPLOYED
+- SELF_EMPLOYED
+- UNEMPLOYED
+- STUDENT
+- RETIRED
+
+Currency Codes (ISO 4217):
+- USD (US Dollar)
+- EUR (Euro)
+- GBP (British Pound)
+- LKR (Sri Lankan Rupee)
+- INR (Indian Rupee)
+- etc.
+
+Expected Response (201 Created):
+{
+  "success": true,
+  "message": "Wizard profile created successfully",
+  "data": {
+    "id": 1,
+    "userId": 1,
+    "monthlyIncome": 5000.00,
+    "monthlyExpense": 3000.00,
+    "savingsGoal": 10000.00,
+    "financialKnowledgeLevel": "INTERMEDIATE",
+    "employmentStatus": "EMPLOYED",
+    "preferredCurrency": "USD",
+    "createdAt": "2026-08-01T...",
+    "updatedAt": "2026-08-01T..."
+  },
+  "timestamp": "2026-08-01T..."
+}
+
+=====================================
+TEST 6: GET WIZARD PROFILE
+=====================================
+
+Method: GET
+URL: http://localhost:8080/api/v1/wizard
+
+Headers:
+Authorization: Bearer <YOUR_TOKEN>
+
+Expected Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "userId": 1,
+    "monthlyIncome": 5000.00,
+    "monthlyExpense": 3000.00,
+    "savingsGoal": 10000.00,
+    "financialKnowledgeLevel": "INTERMEDIATE",
+    "employmentStatus": "EMPLOYED",
+    "preferredCurrency": "USD",
+    "createdAt": "2026-08-01T...",
+    "updatedAt": "2026-08-01T..."
+  },
+  "timestamp": "2026-08-01T..."
+}
+
+If wizard profile not found (404):
+{
+  "timestamp": "2026-08-01T...",
+  "status": 404,
+  "error": "Not Found",
+  "message": "Wizard profile not found",
+  "path": "/api/v1/wizard"
+}
+
+=====================================
+TEST 7: UPDATE WIZARD PROFILE
+=====================================
+
+Method: PUT
+URL: http://localhost:8080/api/v1/wizard
+
+Headers:
+Content-Type: application/json
+Authorization: Bearer <YOUR_TOKEN>
+
+Body (raw JSON):
+{
+  "monthlyIncome": 6000.00,
+  "monthlyExpense": 3500.00,
+  "savingsGoal": 15000.00,
+  "financialKnowledgeLevel": "ADVANCED",
+  "employmentStatus": "EMPLOYED",
+  "preferredCurrency": "USD"
+}
+
+Expected Response (200 OK):
+{
+  "success": true,
+  "message": "Wizard profile updated successfully",
+  "data": {
+    "id": 1,
+    "userId": 1,
+    "monthlyIncome": 6000.00,
+    "monthlyExpense": 3500.00,
+    "savingsGoal": 15000.00,
+    "financialKnowledgeLevel": "ADVANCED",
+    "employmentStatus": "EMPLOYED",
+    "preferredCurrency": "USD",
+    "createdAt": "2026-08-01T...",
+    "updatedAt": "2026-08-01T..." (updated timestamp)
+  },
+  "timestamp": "2026-08-01T..."
+}
+
+=====================================
+WIZARD VALIDATION ERRORS:
+=====================================
+
+1. MONTHLY EXPENSE > MONTHLY INCOME:
+   Body: monthlyExpense = 6000, monthlyIncome = 5000
+   Expected: 400 Bad Request
+   {
+     "message": "Monthly expense cannot be greater than monthly income"
+   }
+
+2. NEGATIVE VALUES:
+   Body: monthlyIncome = -1000
+   Expected: 400 Bad Request
+   {
+     "validationErrors": {
+       "monthlyIncome": "Monthly income must be greater than 0"
+     }
+   }
+
+3. INVALID CURRENCY CODE:
+   Body: preferredCurrency = "US" (only 2 chars)
+   Expected: 400 Bad Request
+   {
+     "validationErrors": {
+       "preferredCurrency": "Currency code must be 3 characters (ISO 4217)"
+     }
+   }
+
+4. MISSING REQUIRED FIELDS:
+   Body: {} (empty)
+   Expected: 400 Bad Request
+   {
+     "validationErrors": {
+       "monthlyIncome": "Monthly income is required",
+       "monthlyExpense": "Monthly expense is required",
+       ...
+     }
+   }
+
+5. CREATE WIZARD TWICE:
+   Create wizard profile, then try to create again
+   Expected: 400 Bad Request
+   {
+     "message": "Wizard profile already exists. Use update endpoint instead."
+   }
+
+6. UNAUTHORIZED ACCESS:
+   No token or invalid token
+   Expected: 401 Unauthorized
+
+=====================================
+COMPLETE TESTING FLOW:
+=====================================
+
+1. Register User:
+   POST /api/v1/auth/register
+   Save the token
+
+2. Create Wizard Profile:
+   POST /api/v1/wizard (with token)
+
+3. Get Wizard Profile:
+   GET /api/v1/wizard (with token)
+
+4. Update Wizard Profile:
+   PUT /api/v1/wizard (with token)
+
+5. Verify in Database:
+   mysql -u finai_user -p finai_dev
+   SELECT * FROM wizard_profiles;
+
+=====================================
+MYSQL VERIFICATION:
+=====================================
+
+Connect to MySQL:
+mysql -u finai_user -p finai_dev
+Password: finai_password
+
+Check wizard profiles:
+SELECT * FROM wizard_profiles;
+SELECT wp.*, u.email FROM wizard_profiles wp JOIN users u ON wp.user_id = u.id;
+
+Expected columns:
+- id
+- user_id
+- monthly_income
+- monthly_expense
+- savings_goal
+- financial_knowledge_level
+- employment_status
+- preferred_currency
+- created_at
+- updated_at
+
+=====================================
