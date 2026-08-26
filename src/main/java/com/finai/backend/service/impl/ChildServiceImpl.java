@@ -390,6 +390,20 @@ public class ChildServiceImpl implements ChildService {
     }
 
     private ChildProfileResponse mapToProfileResponse(ChildProfile c) {
+        ChildProfileResponse.ChildUserInfo childUserInfo = null;
+        
+        if (c.getChildUser() != null) {
+            childUserInfo = ChildProfileResponse.ChildUserInfo.builder()
+                    .id(c.getChildUser().getId())
+                    .email(c.getChildUser().getEmail())
+                    .firstName(c.getChildUser().getFirstName())
+                    .lastName(c.getChildUser().getLastName())
+                    .enabled(c.getChildUser().getEnabled())
+                    .emailVerified(c.getChildUser().getEmailVerified())
+                    .profileComplete(c.getChildUser().getProfileComplete())
+                    .build();
+        }
+        
         return ChildProfileResponse.builder()
                 .id(c.getId())
                 .firstName(c.getFirstName())
@@ -398,6 +412,7 @@ public class ChildServiceImpl implements ChildService {
                 .avatar(c.getAvatar())
                 .currentSavings(c.getCurrentSavings())
                 .totalPoints(c.getTotalPoints())
+                .childUser(childUserInfo)
                 .activeGoalsCount((int) c.getGoals().stream().filter(g -> g.getStatus() == GoalStatus.IN_PROGRESS).count())
                 .completedQuizzesCount(c.getQuizResults().size())
                 .totalRewardsCount(c.getRewards().size())

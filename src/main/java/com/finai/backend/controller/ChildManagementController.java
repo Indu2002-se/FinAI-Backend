@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,6 +22,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/v1/children")
 @RequiredArgsConstructor
@@ -51,10 +53,20 @@ public class ChildManagementController {
     @Operation(summary = "Create child profile")
     public ResponseEntity<ApiResponse<ChildProfileResponse>> createChild(
             @Valid @RequestBody ChildProfileRequest request) {
-        User parent = securityUtils.getCurrentUser();
-        ChildProfileResponse response = childService.createChildProfile(request, parent);
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.success("Child profile created successfully", response));
+        try {
+            User parent = securityUtils.getCurrentUser();
+            log.info("Creating child profile for parent: {}", parent.getEmail());
+            log.info("Child profile request: firstName={}, email={}", request.getFirstName(), request.getUsernameOrEmail());
+            
+            ChildProfileResponse response = childService.createChildProfile(request, parent);
+            
+            log.info("Child profile created successfully: {}", response.getId());
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(ApiResponse.success("Child profile created successfully", response));
+        } catch (Exception e) {
+            log.error("Error creating child profile", e);
+            throw e;
+        }
     }
 
     @PutMapping("/{childId}")
