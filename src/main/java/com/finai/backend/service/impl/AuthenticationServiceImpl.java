@@ -10,6 +10,7 @@ import com.finai.backend.entity.enums.RoleType;
 import com.finai.backend.exception.AuthenticationException;
 import com.finai.backend.exception.BadRequestException;
 import com.finai.backend.exception.ResourceNotFoundException;
+import com.finai.backend.repository.ChildProfileRepository;
 import com.finai.backend.repository.RoleRepository;
 import com.finai.backend.repository.UserRepository;
 import com.finai.backend.security.JwtService;
@@ -33,6 +34,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
 
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final ChildProfileRepository childProfileRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
@@ -81,7 +83,16 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         // Map to response
         UserResponse userResponse = UserMapper.toUserResponse(user);
 
-        return AuthenticationResponse.of(token, userResponse);
+        // Create authentication response with userType
+        AuthenticationResponse response = AuthenticationResponse.builder()
+                .token(token)
+                .refreshToken(token)
+                .type("Bearer")
+                .user(userResponse)
+                .userType(determineUserType(user))
+                .build();
+
+        return response;
     }
 
     @Override
@@ -121,8 +132,22 @@ public class AuthenticationServiceImpl implements AuthenticationService {
 
         // Map to response
         UserResponse userResponse = UserMapper.toUserResponse(user);
+        
+        // Create authentication response with userType
+        AuthenticationResponse response = AuthenticationResponse.builder()
+                .token(token)
+                .refreshToken(token)
+                .type("Bearer")
+                .user(userResponse)
+                .userType(determineUserType(user))
+                .build();
 
-        return AuthenticationResponse.of(token, userResponse);
+        // If this is a child user, populate childProfileId
+        if ("CHILD".equals(response.getUserType())) {
+            response.setChildProfileId(findChildProfileId(user));
+        }
+
+        return response;
     }
 
     @Override
@@ -137,5 +162,28 @@ public class AuthenticationServiceImpl implements AuthenticationService {
 
         // Map to response
         return UserMapper.toUserResponse(user);
+    }
+
+    /**
+     * Determine user type based on roles
+     */
+    private String determineUserType(User user) {
+        if (user.getRoles() != null) {
+            for (Role role : user.getRoles()) {
+                if (role.getName() == RoleType.ROLE_CHILD) {
+                    return "CHILD";
+                }
+            }
+        }
+        return "PARENT";
+    }
+
+    /**
+     * Find child profile ID for a child user
+     */
+    private Long findChildProfileId(User user) {
+        return childProfileRepository.findByChildUser(user)
+                .map(childProfile -> childProfile.getId())
+                .orElse(null);
     }
 }

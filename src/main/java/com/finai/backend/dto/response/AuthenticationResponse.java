@@ -18,6 +18,8 @@ public class AuthenticationResponse {
     private String refreshToken;
     private String type;
     private UserResponse user;
+    private String userType; // 'PARENT' or 'CHILD' - for mobile app routing
+    private Long childProfileId; // ID of child profile if user is a child
 
     public static AuthenticationResponse of(String token, UserResponse user) {
         return AuthenticationResponse.builder()
@@ -25,6 +27,14 @@ public class AuthenticationResponse {
                 .refreshToken(token)
                 .type("Bearer")
                 .user(user)
+                .userType(determineUserType(user))
                 .build();
+    }
+
+    private static String determineUserType(UserResponse user) {
+        if (user.getRoles() != null && user.getRoles().contains("ROLE_CHILD")) {
+            return "CHILD";
+        }
+        return "PARENT";
     }
 }
