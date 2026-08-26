@@ -65,20 +65,31 @@ public class ChildServiceImpl implements ChildService {
                 throw new BadRequestException("Username/email already registered for another account.");
             }
 
+            // Validate password is provided
+            if (request.getPassword() == null || request.getPassword().isBlank()) {
+                throw new BadRequestException("Password is required for child account");
+            }
+
             Role childRole = roleRepository.findByName(RoleType.ROLE_CHILD)
                     .orElseGet(() -> roleRepository.save(Role.builder().name(RoleType.ROLE_CHILD).build()));
 
+            // Create child user with encoded password
+            String encodedPassword = passwordEncoder.encode(request.getPassword());
+            
             childAccount = User.builder()
                     .firstName(request.getFirstName())
                     .lastName(request.getLastName() != null ? request.getLastName() : "Child")
                     .email(request.getUsernameOrEmail())
-                    .password(passwordEncoder.encode(request.getPassword() != null ? request.getPassword() : "child123"))
+                    .password(encodedPassword)
                     .enabled(true)
                     .emailVerified(true)
                     .profileComplete(true)
+                    .provider("LOCAL")
                     .build();
             childAccount.addRole(childRole);
             childAccount = userRepository.save(childAccount);
+            
+            log.info("Created child user account: {} with email: {}", childAccount.getId(), childAccount.getEmail());
         }
 
         ChildProfile profile = ChildProfile.builder()
@@ -92,7 +103,10 @@ public class ChildServiceImpl implements ChildService {
                 .totalPoints(0)
                 .build();
 
-        return mapToProfileResponse(childProfileRepository.save(profile));
+        ChildProfile savedProfile = childProfileRepository.save(profile);
+        log.info("Created child profile: {} linked to user: {}", savedProfile.getId(), childAccount != null ? childAccount.getId() : null);
+        
+        return mapToProfileResponse(savedProfile);
     }
 
     @Override
