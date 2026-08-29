@@ -21,7 +21,7 @@ class FeatureValidationServiceTest {
         validationService = new FeatureValidationServiceImpl();
     }
 
-    private Map<String, Object> createValid42FeatureMap() {
+    private Map<String, Object> createValid41FeatureMap() {
         Map<String, Object> map = new LinkedHashMap<>();
         for (String col : FeatureValidationService.EXPECTED_FEATURE_NAMES) {
             map.put(col, 0.0);
@@ -30,9 +30,9 @@ class FeatureValidationServiceTest {
     }
 
     @Test
-    @DisplayName("Valid 42-feature ordered vector passes validation")
-    void testValid42FeatureVectorPasses() {
-        Map<String, Object> features = createValid42FeatureMap();
+    @DisplayName("Valid 41-feature ordered vector passes validation")
+    void testValid41FeatureVectorPasses() {
+        Map<String, Object> features = createValid41FeatureMap();
         FeatureValidationResult result = validationService.validate(features);
 
         assertTrue(result.isValid());
@@ -40,9 +40,9 @@ class FeatureValidationServiceTest {
     }
 
     @Test
-    @DisplayName("Vector with 40 features fails with length mismatch error")
-    void testVectorWith40FeaturesFailsLengthMismatch() {
-        Map<String, Object> features = createValid42FeatureMap();
+    @DisplayName("Vector with 39 features fails with length mismatch error")
+    void testVectorWith39FeaturesFailsLengthMismatch() {
+        Map<String, Object> features = createValid41FeatureMap();
         features.remove("instalment_goods_flag");
         features.remove("instalment_amount");
 
@@ -55,7 +55,7 @@ class FeatureValidationServiceTest {
     @Test
     @DisplayName("Vector with null value fails validation")
     void testVectorWithNullValueFails() {
-        Map<String, Object> features = createValid42FeatureMap();
+        Map<String, Object> features = createValid41FeatureMap();
         features.put("total_income", null);
 
         FeatureValidationResult result = validationService.validate(features);

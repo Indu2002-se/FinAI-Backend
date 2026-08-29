@@ -47,7 +47,7 @@ public class ReportServiceImpl implements ReportService {
         BigDecimal totalIncome = incomeRepository.sumAmountByUserAndDateRange(user, start, end);
         BigDecimal totalExpense = expenseRepository.sumAmountByUserAndDateRange(user, start, end);
 
-        // Fallback baseline for clean presentation
+        // Check profile if monthly aggregation has no entries yet
         if (totalIncome.compareTo(BigDecimal.ZERO) == 0 && totalExpense.compareTo(BigDecimal.ZERO) == 0) {
             UserProfile p = userProfileRepository.findByUser(user).orElse(null);
             if (p != null) {
@@ -55,8 +55,6 @@ public class ReportServiceImpl implements ReportService {
                 if (p.getMonthlyExpense() != null) totalExpense = p.getMonthlyExpense();
             }
         }
-        if (totalIncome.compareTo(BigDecimal.ZERO) == 0) totalIncome = new BigDecimal("100000.00");
-        if (totalExpense.compareTo(BigDecimal.ZERO) == 0) totalExpense = totalIncome.multiply(new BigDecimal("0.55"));
 
         BigDecimal netSavings = totalIncome.subtract(totalExpense);
         BigDecimal savingsRate = totalIncome.compareTo(BigDecimal.ZERO) > 0
@@ -98,10 +96,10 @@ public class ReportServiceImpl implements ReportService {
                 .budgetAllocated(budgetAllocated)
                 .budgetSpent(budgetSpent)
                 .budgetVariance(budgetVariance)
-                .financialHealthScore(risk != null ? risk.getFinancialHealthScore() : BigDecimal.valueOf(75.0))
-                .riskLevel(risk != null ? risk.getRiskLevel() : "Low Risk")
-                .topRiskDriver(risk != null ? risk.getTopDriverReadable() : "Expense-to-Income Ratio")
-                .aiRecommendation(rec != null ? rec.getRecommendationText() : "Maintain healthy financial discipline.")
+                .financialHealthScore(risk != null ? risk.getFinancialHealthScore() : null)
+                .riskLevel(risk != null ? risk.getRiskLevel() : "Data unavailable")
+                .topRiskDriver(risk != null ? risk.getTopDriverReadable() : "Data unavailable")
+                .aiRecommendation(rec != null ? rec.getRecommendationText() : "Data unavailable")
                 .build();
     }
 }

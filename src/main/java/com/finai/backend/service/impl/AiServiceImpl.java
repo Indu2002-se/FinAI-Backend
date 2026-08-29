@@ -6,6 +6,7 @@ import com.finai.backend.dto.response.*;
 import com.finai.backend.entity.*;
 import com.finai.backend.entity.enums.ExpenseCategory;
 import com.finai.backend.entity.enums.InferenceSource;
+import com.finai.backend.exception.BadRequestException;
 import com.finai.backend.exception.ResourceNotFoundException;
 import com.finai.backend.repository.*;
 import com.finai.backend.service.interfaces.AiService;
@@ -369,7 +370,6 @@ public class AiServiceImpl implements AiService {
         double creditCardDebt = 0.0;
         int ccCreditLines = 0;
         double instalmentAmount = 0.0;
-        boolean hasDefaulted = false;
 
         for (Debt d : userDebts) {
             if (d.getStatus() == com.finai.backend.entity.enums.DebtStatus.ACTIVE) {
@@ -385,8 +385,6 @@ public class AiServiceImpl implements AiService {
                 } else if (d.getMonthlyPayment() != null) {
                     instalmentAmount += d.getMonthlyPayment().doubleValue();
                 }
-            } else if (d.getStatus() == com.finai.backend.entity.enums.DebtStatus.DEFAULTED) {
-                hasDefaulted = true;
             }
         }
 
@@ -431,10 +429,9 @@ public class AiServiceImpl implements AiService {
         double creditScore = (profile.getCreditScore() != null && profile.getCreditScore() > 0)
                 ? profile.getCreditScore().doubleValue() : 0.0;
 
-        // 6. Credit and Institutional Features
+        // 6. Credit and Institutional Features (zero/absent neutral baselines for bank-specific fields)
         double hasCreditCardDebtFlag = (creditCardDebt > 0.0) ? 1.0 : 2.0; // 1=Yes, 2=No in training schema
         double hasCreditmixMatch = (activeDebtRecords > 0 && ccCreditLines > 0) ? 1.0 : 0.0;
-        double creditDefaulted = hasDefaulted ? 1.0 : 0.0;
         double creditClv = 0.0; // Customer Lifetime Value: 0.0 neutral baseline (bank internal metric)
         double creditFraudTxn = 0.0; // Fraud txn count: 0.0 neutral baseline
         double ccUtilizationRatio = (creditCardDebt > 0.0 && totalIncome > 0.0) ? Math.min(1.0, creditCardDebt / totalIncome) : 0.0;
@@ -447,7 +444,7 @@ public class AiServiceImpl implements AiService {
         double vehicleOwnership = 0.0; // Neutral baseline (0 vehicles)
         double instalmentGoodsFlag = (instalmentAmount > 0.0) ? 1.0 : 2.0; // 1=Yes, 2=No in training schema
 
-        // Construct exact 42-feature ordered map
+        // Construct exact 41-feature ordered map (leakage-free)
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("age", age);
         map.put("gender", gender);
@@ -477,7 +474,6 @@ public class AiServiceImpl implements AiService {
         map.put("has_credit_card_debt", hasCreditCardDebtFlag);
         map.put("has_creditmix_match", hasCreditmixMatch);
         map.put("credit_score", creditScore);
-        map.put("credit_defaulted", creditDefaulted);
         map.put("credit_clv", creditClv);
         map.put("credit_fraud_txn", creditFraudTxn);
         map.put("cc_utilization_ratio", ccUtilizationRatio);
@@ -492,8 +488,8 @@ public class AiServiceImpl implements AiService {
         map.put("instalment_goods_flag", instalmentGoodsFlag);
         map.put("instalment_amount", instalmentAmount);
 
-        log.info("Successfully constructed Model 1 feature vector with {} features for userId: {} (Income={}, Exp={}, Debt={}, Surplus={})",
-                map.size(), user.getId(), totalIncome, totalExp, totalDebt, financialSurplus);
+        log.info("[SAFE_FEATURE_TRACE] Constructed Model 1 feature vector: featureCount={}, userId={}, sources=[UserProfile, Income, Expense, Debt, Savings], timestamp={}, validationReady=true",
+                map.size(), user.getId(), java.time.Instant.now());
 
         return map;
     }
@@ -631,9 +627,11 @@ public class AiServiceImpl implements AiService {
 
     private FinancialRiskResponse parseRiskResponse(Map<String, Object> riskMap, Map<String, Object> expMap) {
         if (riskMap == null) return null;
-        BigDecimal score = BigDecimal.valueOf(((Number) riskMap.getOrDefault("financialHealthScore", 75.0)).doubleValue());
-        String level = (String) riskMap.getOrDefault("riskLevel", "Low Risk");
-        BigDecimal prob = BigDecimal.valueOf(((Number) riskMap.getOrDefault("riskProbability", 0.20)).doubleValue());
+        Number scoreNum = (Number) riskMap.get("financialHealthScore");
+        BigDecimal score = scoreNum != null ? BigDecimal.valueOf(scoreNum.doubleValue()) : BigDecimal.ZERO;
+        String level = (String) riskMap.getOrDefault("riskLevel", "Data unavailable");
+        Number probNum = (Number) riskMap.get("riskProbability");
+        BigDecimal prob = probNum != null ? BigDecimal.valueOf(probNum.doubleValue()) : BigDecimal.ZERO;
         InferenceSource source = parseInferenceSource((String) riskMap.get("inference_source"));
 
         String topDriver = "expense_to_income_ratio";
@@ -806,28 +804,56 @@ public class AiServiceImpl implements AiService {
         List<ExpenseForecastResponse.ForecastItem> nonFood = new ArrayList<>();
         List<ExpenseForecastResponse.ForecastItem> total = new ArrayList<>();
 
-        for (int i = 1; i <= 6; i++) {
-            LocalDate dt = now.plusMonths(i).withDayOfMonth(1);
-            String dStr = dt.toString();
-            BigDecimal fVal = new BigDecimal("25500.00").multiply(BigDecimal.valueOf(1.0 + 0.005 * i));
-            BigDecimal nfVal = new BigDecimal("22000.00").multiply(BigDecimal.valueOf(1.0 + 0.004 * i));
-            BigDecimal totVal = fVal.add(nfVal);
+        // Derive baseline from real user history (most recent month) rather than synthetic values
+        BigDecimal baseFoodVal = BigDecimal.ZERO;
+        BigDecimal baseNonFoodVal = BigDecimal.ZERO;
+        if (history != null && !history.isEmpty()) {
+            Map<String, Object> recent = history.get(history.size() - 1);
+            Object fObj = recent.get("food");
+            if (fObj == null) fObj = recent.get("food_expense");
+            if (fObj != null) baseFoodVal = new BigDecimal(fObj.toString());
 
-            food.add(ExpenseForecastResponse.ForecastItem.builder().date(dStr).predictedAmount(fVal.setScale(2, RoundingMode.HALF_UP)).build());
-            nonFood.add(ExpenseForecastResponse.ForecastItem.builder().date(dStr).predictedAmount(nfVal.setScale(2, RoundingMode.HALF_UP)).build());
-            total.add(ExpenseForecastResponse.ForecastItem.builder()
-                    .date(dStr)
-                    .predictedAmount(totVal.setScale(2, RoundingMode.HALF_UP))
-                    .lowerBound(totVal.multiply(new BigDecimal("0.91")).setScale(2, RoundingMode.HALF_UP))
-                    .upperBound(totVal.multiply(new BigDecimal("1.09")).setScale(2, RoundingMode.HALF_UP))
-                    .build());
+            Object nfObj = recent.get("nonFood");
+            if (nfObj == null) nfObj = recent.get("non_food_expense");
+            if (nfObj != null) baseNonFoodVal = new BigDecimal(nfObj.toString());
+
+            if (baseFoodVal.compareTo(BigDecimal.ZERO) <= 0 && baseNonFoodVal.compareTo(BigDecimal.ZERO) <= 0) {
+                Object totObj = recent.get("total");
+                if (totObj != null) {
+                    BigDecimal tot = new BigDecimal(totObj.toString());
+                    baseFoodVal = tot.multiply(new BigDecimal("0.35")).setScale(2, RoundingMode.HALF_UP);
+                    baseNonFoodVal = tot.subtract(baseFoodVal);
+                }
+            }
         }
+
+        // Only generate forecast if we have real baseline data
+        if (baseFoodVal.compareTo(BigDecimal.ZERO) > 0 || baseNonFoodVal.compareTo(BigDecimal.ZERO) > 0) {
+            for (int i = 1; i <= 6; i++) {
+                LocalDate dt = now.plusMonths(i).withDayOfMonth(1);
+                String dStr = dt.toString();
+                // Apply small 0.5% monthly growth trend using real baseline
+                BigDecimal fVal = baseFoodVal.multiply(BigDecimal.valueOf(1.0 + 0.005 * i)).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal nfVal = baseNonFoodVal.multiply(BigDecimal.valueOf(1.0 + 0.005 * i)).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal totVal = fVal.add(nfVal);
+
+                food.add(ExpenseForecastResponse.ForecastItem.builder().date(dStr).predictedAmount(fVal).build());
+                nonFood.add(ExpenseForecastResponse.ForecastItem.builder().date(dStr).predictedAmount(nfVal).build());
+                total.add(ExpenseForecastResponse.ForecastItem.builder()
+                        .date(dStr)
+                        .predictedAmount(totVal)
+                        .lowerBound(totVal.multiply(new BigDecimal("0.91")).setScale(2, RoundingMode.HALF_UP))
+                        .upperBound(totVal.multiply(new BigDecimal("1.09")).setScale(2, RoundingMode.HALF_UP))
+                        .build());
+            }
+        }
+        // If no real history, food/nonFood/total remain empty — UI will show 'Data unavailable'
 
         return ExpenseForecastResponse.builder()
                 .food(food)
                 .nonFood(nonFood)
                 .total(total)
-                .forecastMonths(6)
+                .forecastMonths(total.size())
                 .inferenceSource(InferenceSource.RULE_FALLBACK)
                 .build();
     }
@@ -923,16 +949,16 @@ public class AiServiceImpl implements AiService {
         if (totalIncome.compareTo(BigDecimal.ZERO) == 0 && profile != null && profile.getMonthlyIncome() != null) {
             totalIncome = profile.getMonthlyIncome();
         }
-        if (totalIncome.compareTo(BigDecimal.ZERO) == 0) {
-            totalIncome = new BigDecimal("100000.00");
+        if (totalIncome.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BadRequestException("User has no income recorded. Please record income or set profile monthly income before generating a savings plan.");
         }
 
         BigDecimal totalExp = expenseRepository.sumAmountByUserAndDateRange(user, startOfMonth, endOfMonth);
         if (totalExp.compareTo(BigDecimal.ZERO) == 0 && profile != null && profile.getMonthlyExpense() != null) {
             totalExp = profile.getMonthlyExpense();
         }
-        if (totalExp.compareTo(BigDecimal.ZERO) == 0) {
-            totalExp = totalIncome.multiply(new BigDecimal("0.60"));
+        if (totalExp.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BadRequestException("User has no expenses recorded. Please record expenses or set profile monthly expense before generating a savings plan.");
         }
 
         int targetMonths = 6;

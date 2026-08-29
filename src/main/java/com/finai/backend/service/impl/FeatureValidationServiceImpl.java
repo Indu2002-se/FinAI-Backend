@@ -56,7 +56,7 @@ public class FeatureValidationServiceImpl implements FeatureValidationService {
             return FeatureValidationResult.failure(errors);
         }
 
-        log.debug("Feature validation passed successfully with 42 features.");
+        log.debug("Feature validation passed successfully with 41 features.");
         return FeatureValidationResult.success();
     }
 }

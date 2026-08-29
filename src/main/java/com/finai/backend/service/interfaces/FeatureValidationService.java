@@ -36,7 +36,6 @@ public interface FeatureValidationService {
             "has_credit_card_debt",
             "has_creditmix_match",
             "credit_score",
-            "credit_defaulted",
             "credit_clv",
             "credit_fraud_txn",
             "cc_utilization_ratio",
