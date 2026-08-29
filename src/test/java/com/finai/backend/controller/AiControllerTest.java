@@ -150,6 +150,37 @@ public class AiControllerTest {
                 .build();
         expenseRepository.save(utilExp);
 
+        // Seed 2 previous months to provide valid 3-month expense history
+        expenseRepository.save(Expense.builder()
+                .user(testUser)
+                .description("Groceries M-1")
+                .amount(new BigDecimal("22000.00"))
+                .category(ExpenseCategory.FOOD)
+                .expenseDate(LocalDate.now().minusMonths(1))
+                .build());
+        expenseRepository.save(Expense.builder()
+                .user(testUser)
+                .description("Utilities M-1")
+                .amount(new BigDecimal("38000.00"))
+                .category(ExpenseCategory.UTILITIES)
+                .expenseDate(LocalDate.now().minusMonths(1))
+                .build());
+
+        expenseRepository.save(Expense.builder()
+                .user(testUser)
+                .description("Groceries M-2")
+                .amount(new BigDecimal("21000.00"))
+                .category(ExpenseCategory.FOOD)
+                .expenseDate(LocalDate.now().minusMonths(2))
+                .build());
+        expenseRepository.save(Expense.builder()
+                .user(testUser)
+                .description("Utilities M-2")
+                .amount(new BigDecimal("35000.00"))
+                .category(ExpenseCategory.UTILITIES)
+                .expenseDate(LocalDate.now().minusMonths(2))
+                .build());
+
         // Seed Savings Goal
         testGoal = SavingsGoal.builder()
                 .user(testUser)

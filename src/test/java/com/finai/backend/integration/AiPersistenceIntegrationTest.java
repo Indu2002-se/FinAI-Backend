@@ -120,6 +120,22 @@ public class AiPersistenceIntegrationTest {
                 .expenseDate(LocalDate.now())
                 .build();
         expenseRepository.save(expense);
+
+        // Seed 2 previous months for valid 3-month expense history
+        expenseRepository.save(Expense.builder()
+                .user(testUser)
+                .description("Groceries M-1")
+                .amount(new BigDecimal("19000.00"))
+                .category(ExpenseCategory.FOOD)
+                .expenseDate(LocalDate.now().minusMonths(1))
+                .build());
+        expenseRepository.save(Expense.builder()
+                .user(testUser)
+                .description("Groceries M-2")
+                .amount(new BigDecimal("18500.00"))
+                .category(ExpenseCategory.FOOD)
+                .expenseDate(LocalDate.now().minusMonths(2))
+                .build());
     }
 
     /**

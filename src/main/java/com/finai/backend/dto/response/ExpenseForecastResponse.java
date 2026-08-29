@@ -1,5 +1,6 @@
 package com.finai.backend.dto.response;
 
+import com.finai.backend.entity.enums.InferenceSource;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -15,6 +16,7 @@ public class ExpenseForecastResponse {
     private List<ForecastItem> nonFood;
     private List<ForecastItem> total;
     private Integer forecastMonths;
+    private InferenceSource inferenceSource;
 
     @Getter
     @Setter

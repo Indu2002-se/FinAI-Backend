@@ -1,5 +1,6 @@
 package com.finai.backend.dto.response;
 
+import com.finai.backend.entity.enums.InferenceSource;
 import lombok.*;
 
 import java.util.List;
@@ -15,4 +16,5 @@ public class AiRecommendationResponse {
     private String recommendationText;
     private List<String> actionItems;
     private Boolean isApplied;
+    private InferenceSource inferenceSource;
 }

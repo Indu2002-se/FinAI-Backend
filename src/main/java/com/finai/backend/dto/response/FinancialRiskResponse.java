@@ -1,5 +1,6 @@
 package com.finai.backend.dto.response;
 
+import com.finai.backend.entity.enums.InferenceSource;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -17,6 +18,7 @@ public class FinancialRiskResponse {
     private String topDriver;
     private String topDriverReadable;
     private List<DriverDetail> drivers;
+    private InferenceSource inferenceSource;
 
     @Getter
     @Setter

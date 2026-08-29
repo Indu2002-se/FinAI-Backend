@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finai.backend.dto.response.*;
 import com.finai.backend.entity.*;
 import com.finai.backend.entity.enums.ExpenseCategory;
+import com.finai.backend.entity.enums.InferenceSource;
 import com.finai.backend.exception.ResourceNotFoundException;
 import com.finai.backend.repository.*;
 import com.finai.backend.service.interfaces.AiService;
+import com.finai.backend.service.interfaces.FeatureValidationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,6 +38,7 @@ public class AiServiceImpl implements AiService {
     private final DebtRepository debtRepository;
     private final SavingsRepository savingsRepository;
     private final SavingsGoalRepository savingsGoalRepository;
+    private final FeatureValidationService featureValidationService;
 
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -48,13 +51,32 @@ public class AiServiceImpl implements AiService {
     public AiAnalysisResponse runFullAnalysis(User user) {
         log.info("Executing full AI financial analysis for user id: {}", user.getId());
 
-        // 1. Build Model 1 Feature Vector
+        // 1. Build Model 1 Feature Vector from database
         Map<String, Object> features = buildModel1Features(user);
+        if (features == null) {
+            log.warn("Cannot run AI analysis: missing required database entities for user id: {}. Returning INSUFFICIENT_DATA.", user.getId());
+            return buildErrorAnalysisResponse(InferenceSource.INSUFFICIENT_DATA,
+                    "Incomplete user profile or missing income/expense records. Please complete your financial profile.");
+        }
 
-        // 2. Build Expense History
+        // 2. Validate Feature Vector Completeness, Non-nullness, and Order (Task 4.1, 5.1)
+        FeatureValidationResult validationResult = featureValidationService.validate(features);
+        if (!validationResult.isValid()) {
+            log.warn("Cannot run AI analysis: feature validation failed for user id: {}. Errors: {}. Returning INVALID_FEATURES.",
+                    user.getId(), validationResult.getErrors());
+            return buildErrorAnalysisResponse(InferenceSource.INVALID_FEATURES,
+                    "Feature validation failed: " + String.join("; ", validationResult.getErrors()));
+        }
+
+        // 3. Build Expense History (minimum 3 months required) (Task 3.1, 5.1)
         List<Map<String, Object>> history = buildExpenseHistory(user);
+        if (history == null || history.size() < 3) {
+            log.warn("Cannot run AI analysis: fewer than 3 months of expense history for user id: {}. Returning INSUFFICIENT_DATA.", user.getId());
+            return buildErrorAnalysisResponse(InferenceSource.INSUFFICIENT_DATA,
+                    "Insufficient expense history. At least 3 months of expense records are required for AI analysis.");
+        }
 
-        // 3. Call FastAPI /api/v1/ai/analyze
+        // 4. Call FastAPI /api/v1/ai/analyze
         Map<String, Object> requestPayload = new HashMap<>();
         requestPayload.put("userId", user.getId());
         requestPayload.put("features", features);
@@ -71,6 +93,7 @@ public class AiServiceImpl implements AiService {
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestPayload, headers);
 
+            log.info("Sending prediction request to FastAPI AI service at {}", url);
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Map<String, Object> body = response.getBody();
@@ -87,15 +110,31 @@ public class AiServiceImpl implements AiService {
                 // Parse Recommendation
                 Map<String, Object> recMap = (Map<String, Object>) body.get("recommendation");
                 recommendationResponse = parseRecommendationResponse(recMap);
+            } else {
+                log.warn("FastAPI AI service returned non-2xx status: {}. Generating MODEL_UNAVAILABLE baseline.", response.getStatusCode());
+                riskResponse = generateFallbackRisk(features);
+                riskResponse.setInferenceSource(InferenceSource.MODEL_UNAVAILABLE);
+                forecastResponse = generateFallbackForecast(history);
+                forecastResponse.setInferenceSource(InferenceSource.MODEL_UNAVAILABLE);
+                recommendationResponse = generateFallbackRecommendation(riskResponse, features);
+                recommendationResponse.setInferenceSource(InferenceSource.MODEL_UNAVAILABLE);
             }
         } catch (Exception e) {
-            log.warn("FastAPI service connection error at {}: {}. Generating rule-based analytical baseline.", aiServiceUrl, e.getMessage());
+            log.warn("FastAPI service connection error at {}: {}. Generating MODEL_UNAVAILABLE baseline.", aiServiceUrl, e.getMessage());
             riskResponse = generateFallbackRisk(features);
+            riskResponse.setInferenceSource(InferenceSource.MODEL_UNAVAILABLE);
             forecastResponse = generateFallbackForecast(history);
+            forecastResponse.setInferenceSource(InferenceSource.MODEL_UNAVAILABLE);
             recommendationResponse = generateFallbackRecommendation(riskResponse, features);
+            recommendationResponse.setInferenceSource(InferenceSource.MODEL_UNAVAILABLE);
         }
 
-        // 4. Persist AI Results
+        log.info("AI analysis completed. Inferences: Risk={}, Forecast={}, Recommendation={}",
+                riskResponse != null ? riskResponse.getInferenceSource() : "null",
+                forecastResponse != null ? forecastResponse.getInferenceSource() : "null",
+                recommendationResponse != null ? recommendationResponse.getInferenceSource() : "null");
+
+        // 5. Persist AI Results
         persistAiResults(user, riskResponse, forecastResponse, recommendationResponse);
 
         return AiAnalysisResponse.builder()
@@ -111,9 +150,21 @@ public class AiServiceImpl implements AiService {
         return financialPredictionRepository.findFirstByUserOrderByCreatedAtDesc(user)
                 .map(this::mapToRiskResponse)
                 .orElseGet(() -> {
-                    // Compute on-the-fly if not present
                     Map<String, Object> features = buildModel1Features(user);
-                    return generateFallbackRisk(features);
+                    if (features == null) {
+                        return FinancialRiskResponse.builder()
+                                .inferenceSource(InferenceSource.INSUFFICIENT_DATA)
+                                .riskLevel("Insufficient Data")
+                                .financialHealthScore(BigDecimal.ZERO)
+                                .riskProbability(BigDecimal.ZERO)
+                                .topDriver("N/A")
+                                .topDriverReadable("Please complete your financial profile.")
+                                .drivers(Collections.emptyList())
+                                .build();
+                    }
+                    FinancialRiskResponse fallback = generateFallbackRisk(features);
+                    fallback.setInferenceSource(InferenceSource.RULE_FALLBACK);
+                    return fallback;
                 });
     }
 
@@ -123,7 +174,18 @@ public class AiServiceImpl implements AiService {
         List<ExpenseForecast> forecasts = expenseForecastRepository.findByUserOrderByForecastDateAsc(user);
         if (forecasts.isEmpty()) {
             List<Map<String, Object>> history = buildExpenseHistory(user);
-            return generateFallbackForecast(history);
+            if (history == null || history.size() < 3) {
+                return ExpenseForecastResponse.builder()
+                        .inferenceSource(InferenceSource.INSUFFICIENT_HISTORY)
+                        .forecastMonths(0)
+                        .food(Collections.emptyList())
+                        .nonFood(Collections.emptyList())
+                        .total(Collections.emptyList())
+                        .build();
+            }
+            ExpenseForecastResponse fallback = generateFallbackForecast(history);
+            fallback.setInferenceSource(InferenceSource.RULE_FALLBACK);
+            return fallback;
         }
 
         List<ExpenseForecastResponse.ForecastItem> food = new ArrayList<>();
@@ -159,6 +221,7 @@ public class AiServiceImpl implements AiService {
                 .nonFood(nonFood)
                 .total(total)
                 .forecastMonths(forecasts.size())
+                .inferenceSource(InferenceSource.ML_MODEL)
                 .build();
     }
 
@@ -169,13 +232,32 @@ public class AiServiceImpl implements AiService {
                 .map(this::mapToRecommendationResponse)
                 .orElseGet(() -> {
                     Map<String, Object> features = buildModel1Features(user);
+                    if (features == null) {
+                        return AiRecommendationResponse.builder()
+                                .inferenceSource(InferenceSource.INSUFFICIENT_DATA)
+                                .category("Action Required")
+                                .topDriver("N/A")
+                                .recommendationText("Please complete your financial profile to receive personalized advice.")
+                                .actionItems(Collections.emptyList())
+                                .isApplied(false)
+                                .build();
+                    }
                     FinancialRiskResponse risk = generateFallbackRisk(features);
-                    return generateFallbackRecommendation(risk, features);
+                    AiRecommendationResponse rec = generateFallbackRecommendation(risk, features);
+                    rec.setInferenceSource(InferenceSource.RULE_FALLBACK);
+                    return rec;
                 });
     }
 
     private Map<String, Object> buildModel1Features(User user) {
+        log.info("Building Model 1 feature vector for user id: {}", user.getId());
+        
+        // Query UserProfile - required entity
         UserProfile profile = userProfileRepository.findByUser(user).orElse(null);
+        if (profile == null) {
+            log.warn("UserProfile not found for user id: {}. Cannot construct features.", user.getId());
+            return null;
+        }
 
         LocalDate now = LocalDate.now();
         LocalDate startOfMonth = now.withDayOfMonth(1);
@@ -218,7 +300,7 @@ public class AiServiceImpl implements AiService {
         double totalIncome = employmentIncome + otherIncome + windfallIncome + agriIncome;
 
         // Fallback to UserProfile monthly income if no income ledger entries exist
-        if (totalIncome <= 0.0 && profile != null && profile.getMonthlyIncome() != null && profile.getMonthlyIncome().compareTo(BigDecimal.ZERO) > 0) {
+        if (totalIncome <= 0.0 && profile.getMonthlyIncome() != null && profile.getMonthlyIncome().compareTo(BigDecimal.ZERO) > 0) {
             totalIncome = profile.getMonthlyIncome().doubleValue();
             if (profile.getEmploymentStatus() != null) {
                 switch (profile.getEmploymentStatus()) {
@@ -240,14 +322,14 @@ public class AiServiceImpl implements AiService {
             }
         }
 
-        // Neutral default total income for uninitialized accounts
+        // Return null if no income data available
         if (totalIncome <= 0.0) {
-            totalIncome = 50000.00; // Dataset median reference
-            employmentIncome = 50000.00;
+            log.warn("No income data available for user id: {}. Cannot construct features.", user.getId());
+            return null;
         }
 
         double nonAgriIncome = employmentIncome + otherIncome + windfallIncome;
-        double transferIncome = 0.0; // Deterministic neutral baseline (no government transfer category in current schema)
+        double transferIncome = 0.0; // No government transfer category in current schema
 
         // 2. Expense Data Extraction from Real Expenses
         List<Expense> monthlyExpenses = expenseRepository.findByUserAndExpenseDateBetween(user, startOfMonth, endOfMonth);
@@ -267,17 +349,16 @@ public class AiServiceImpl implements AiService {
         double totalExp = foodExp + nonFoodExp;
 
         // Fallback to UserProfile monthly expense if no expense ledger entries exist
-        if (totalExp <= 0.0 && profile != null && profile.getMonthlyExpense() != null && profile.getMonthlyExpense().compareTo(BigDecimal.ZERO) > 0) {
+        if (totalExp <= 0.0 && profile.getMonthlyExpense() != null && profile.getMonthlyExpense().compareTo(BigDecimal.ZERO) > 0) {
             totalExp = profile.getMonthlyExpense().doubleValue();
             foodExp = totalExp * 0.35; // Standard household survey food ratio
             nonFoodExp = totalExp - foodExp;
         }
 
-        // Default expense based on total income if no profile/expense exists
+        // Return null if no expense data available
         if (totalExp <= 0.0) {
-            totalExp = totalIncome * 0.50;
-            foodExp = totalExp * 0.35;
-            nonFoodExp = totalExp - foodExp;
+            log.warn("No expense data available for user id: {}. Cannot construct features.", user.getId());
+            return null;
         }
 
         // 3. Debt Data Extraction from Real Debts
@@ -310,7 +391,7 @@ public class AiServiceImpl implements AiService {
         }
 
         // Fallback to UserProfile total debt if no debt records exist
-        if (totalDebt <= 0.0 && profile != null && profile.getTotalDebt() != null && profile.getTotalDebt().compareTo(BigDecimal.ZERO) > 0) {
+        if (totalDebt <= 0.0 && profile.getTotalDebt() != null && profile.getTotalDebt().compareTo(BigDecimal.ZERO) > 0) {
             totalDebt = profile.getTotalDebt().doubleValue();
             activeDebtRecords = 1;
             distinctSources.add("primary_loan");
@@ -321,26 +402,36 @@ public class AiServiceImpl implements AiService {
         double totalSavings = (totalSavingsBd != null) ? totalSavingsBd.doubleValue() : 0.0;
 
         double financialSurplus = totalIncome - totalExp;
-        double expenseToIncomeRatio = totalIncome > 0 ? totalExp / totalIncome : 0.5;
+        double expenseToIncomeRatio = totalIncome > 0 ? totalExp / totalIncome : 0.0;
         double debtToIncomeRatio = totalIncome > 0 ? totalDebt / totalIncome : 0.0;
         double savingsRatio = totalIncome > 0 ? financialSurplus / totalIncome : 0.0;
 
         // 5. Demographic and Household Encodings
-        int householdSize = (profile != null && profile.getHouseholdSize() != null && profile.getHouseholdSize() > 0)
-                ? profile.getHouseholdSize() : 4;
-        int dependentsCount = (profile != null && profile.getDependentsCount() != null)
-                ? profile.getDependentsCount() : 0;
+        // Validate required profile fields
+        if (profile.getAge() == null || profile.getAge() <= 0) {
+            log.warn("Age not available in UserProfile for user id: {}. Cannot construct features.", user.getId());
+            return null;
+        }
+        if (profile.getHouseholdSize() == null || profile.getHouseholdSize() <= 0) {
+            log.warn("HouseholdSize not available in UserProfile for user id: {}. Cannot construct features.", user.getId());
+            return null;
+        }
+        
+        int householdSize = profile.getHouseholdSize();
+        int dependentsCount = (profile.getDependentsCount() != null) ? profile.getDependentsCount() : 0;
         double perCapitaIncome = totalIncome / Math.max(1, householdSize);
         double employmentCapacity = Math.max(0.1, (double) Math.max(1, householdSize - dependentsCount) / (double) householdSize);
 
-        double age = (profile != null && profile.getAge() != null && profile.getAge() > 0) ? profile.getAge().doubleValue() : 35.0;
-        double gender = encodeGender(profile != null ? profile.getGender() : null);
-        double education = encodeEducation(profile != null ? profile.getEducation() : null);
-        double maritalStatus = encodeMaritalStatus(profile != null ? profile.getMaritalStatus() : null);
-        double creditScore = (profile != null && profile.getCreditScore() != null && profile.getCreditScore() > 0)
-                ? profile.getCreditScore().doubleValue() : 650.0;
+        double age = profile.getAge().doubleValue();
+        double gender = encodeGender(profile.getGender());
+        double education = encodeEducation(profile.getEducation());
+        double maritalStatus = encodeMaritalStatus(profile.getMaritalStatus());
+        
+        // CreditScore: use profile value or default to 0.0 if not available (neutral baseline)
+        double creditScore = (profile.getCreditScore() != null && profile.getCreditScore() > 0)
+                ? profile.getCreditScore().doubleValue() : 0.0;
 
-        // 6. Credit and Institutional Features (Deterministic, documented defaults for retail app)
+        // 6. Credit and Institutional Features
         double hasCreditCardDebtFlag = (creditCardDebt > 0.0) ? 1.0 : 2.0; // 1=Yes, 2=No in training schema
         double hasCreditmixMatch = (activeDebtRecords > 0 && ccCreditLines > 0) ? 1.0 : 0.0;
         double creditDefaulted = hasDefaulted ? 1.0 : 0.0;
@@ -401,14 +492,14 @@ public class AiServiceImpl implements AiService {
         map.put("instalment_goods_flag", instalmentGoodsFlag);
         map.put("instalment_amount", instalmentAmount);
 
-        log.info("Constructed Model 1 feature vector with {} features for userId: {} (Income={}, Exp={}, Debt={}, Surplus={})",
+        log.info("Successfully constructed Model 1 feature vector with {} features for userId: {} (Income={}, Exp={}, Debt={}, Surplus={})",
                 map.size(), user.getId(), totalIncome, totalExp, totalDebt, financialSurplus);
 
         return map;
     }
 
     private double encodeGender(String gender) {
-        if (gender == null) return 1.0;
+        if (gender == null) return 1.0; // Default: Male encoding
         String g = gender.trim().toUpperCase();
         if (g.startsWith("F") || g.contains("FEMALE")) {
             return 2.0;
@@ -417,7 +508,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private double encodeEducation(String education) {
-        if (education == null) return 10.0;
+        if (education == null) return 10.0; // Default: Advanced level (secondary higher) 
         String e = education.trim().toUpperCase();
         if (e.contains("DOCTOR") || e.contains("PHD")) return 19.0;
         if (e.contains("MASTER") || e.contains("POST")) return 16.0;
@@ -426,11 +517,11 @@ public class AiServiceImpl implements AiService {
         if (e.contains("ADVANCED") || e.contains("A_LEVEL") || e.contains("A/L") || e.contains("SECONDARY_HIGHER")) return 10.0;
         if (e.contains("ORDINARY") || e.contains("O_LEVEL") || e.contains("O/L") || e.contains("SECONDARY")) return 8.0;
         if (e.contains("PRIMARY")) return 5.0;
-        return 10.0; // Dataset median reference
+        return 10.0;
     }
 
     private double encodeMaritalStatus(String maritalStatus) {
-        if (maritalStatus == null) return 1.0;
+        if (maritalStatus == null) return 1.0; // Default: Single
         String m = maritalStatus.trim().toUpperCase();
         if (m.contains("MARRIED")) return 2.0;
         if (m.contains("WIDOW")) return 3.0;
@@ -439,6 +530,7 @@ public class AiServiceImpl implements AiService {
     }
 
     private List<Map<String, Object>> buildExpenseHistory(User user) {
+        log.info("Building expense history for user id: {}", user.getId());
         List<Map<String, Object>> history = new ArrayList<>();
         LocalDate now = LocalDate.now();
 
@@ -449,17 +541,32 @@ public class AiServiceImpl implements AiService {
 
             BigDecimal food = expenseRepository.sumAmountByUserAndCategoryAndDateRange(user, ExpenseCategory.FOOD, start, end);
             BigDecimal total = expenseRepository.sumAmountByUserAndDateRange(user, start, end);
+            
+            if (food == null) food = BigDecimal.ZERO;
+            if (total == null) total = BigDecimal.ZERO;
             BigDecimal nonFood = total.subtract(food);
+            if (nonFood.compareTo(BigDecimal.ZERO) < 0) nonFood = BigDecimal.ZERO;
 
             if (total.compareTo(BigDecimal.ZERO) > 0) {
                 Map<String, Object> point = new HashMap<>();
                 point.put("date", start.toString());
                 point.put("food", food.doubleValue());
-                point.put("nonFood", Math.max(0, nonFood.doubleValue()));
+                point.put("nonFood", nonFood.doubleValue());
                 point.put("total", total.doubleValue());
                 history.add(point);
             }
         }
+
+        // Sort records chronologically
+        history.sort(Comparator.comparing(m -> (String) m.get("date")));
+
+        if (history.size() < 3) {
+            log.warn("Insufficient expense history for user id: {}. Required at least 3 months, found {}",
+                    user.getId(), history.size());
+            return null;
+        }
+
+        log.info("Successfully constructed expense history with {} months for user id: {}", history.size(), user.getId());
         return history;
     }
 
@@ -527,6 +634,7 @@ public class AiServiceImpl implements AiService {
         BigDecimal score = BigDecimal.valueOf(((Number) riskMap.getOrDefault("financialHealthScore", 75.0)).doubleValue());
         String level = (String) riskMap.getOrDefault("riskLevel", "Low Risk");
         BigDecimal prob = BigDecimal.valueOf(((Number) riskMap.getOrDefault("riskProbability", 0.20)).doubleValue());
+        InferenceSource source = parseInferenceSource((String) riskMap.get("inference_source"));
 
         String topDriver = "expense_to_income_ratio";
         String topDriverReadable = "Expense-to-Income Ratio";
@@ -556,6 +664,7 @@ public class AiServiceImpl implements AiService {
                 .topDriver(topDriver)
                 .topDriverReadable(topDriverReadable)
                 .drivers(drivers)
+                .inferenceSource(source)
                 .build();
     }
 
@@ -565,12 +674,14 @@ public class AiServiceImpl implements AiService {
         List<ExpenseForecastResponse.ForecastItem> nonFood = parseForecastItemList((List<Map<String, Object>>) fcMap.get("nonFood"));
         List<ExpenseForecastResponse.ForecastItem> total = parseForecastItemList((List<Map<String, Object>>) fcMap.get("total"));
         int months = ((Number) fcMap.getOrDefault("forecastMonths", 6)).intValue();
+        InferenceSource source = parseInferenceSource((String) fcMap.get("inference_source"));
 
         return ExpenseForecastResponse.builder()
                 .food(food)
                 .nonFood(nonFood)
                 .total(total)
                 .forecastMonths(months)
+                .inferenceSource(source)
                 .build();
     }
 
@@ -594,6 +705,7 @@ public class AiServiceImpl implements AiService {
         String topDriver = (String) recMap.getOrDefault("topDriver", "expense_to_income_ratio");
         String text = (String) recMap.getOrDefault("recommendation", "");
         List<String> actions = (List<String>) recMap.getOrDefault("actionItems", Collections.emptyList());
+        InferenceSource source = parseInferenceSource((String) recMap.get("inference_source"));
 
         return AiRecommendationResponse.builder()
                 .category(cat)
@@ -601,6 +713,7 @@ public class AiServiceImpl implements AiService {
                 .recommendationText(text)
                 .actionItems(actions)
                 .isApplied(false)
+                .inferenceSource(source)
                 .build();
     }
 
@@ -619,6 +732,7 @@ public class AiServiceImpl implements AiService {
                 .topDriver(fp.getTopDriver())
                 .topDriverReadable(fp.getTopDriverReadable())
                 .drivers(drivers)
+                .inferenceSource(InferenceSource.ML_MODEL)
                 .build();
     }
 
@@ -636,6 +750,7 @@ public class AiServiceImpl implements AiService {
                 .recommendationText(r.getRecommendationText())
                 .actionItems(actions)
                 .isApplied(r.getIsApplied())
+                .inferenceSource(InferenceSource.ML_MODEL)
                 .build();
     }
 
@@ -681,6 +796,7 @@ public class AiServiceImpl implements AiService {
                 .topDriver("expense_to_income_ratio")
                 .topDriverReadable("Expense-to-Income Ratio")
                 .drivers(drivers)
+                .inferenceSource(InferenceSource.RULE_FALLBACK)
                 .build();
     }
 
@@ -712,6 +828,7 @@ public class AiServiceImpl implements AiService {
                 .nonFood(nonFood)
                 .total(total)
                 .forecastMonths(6)
+                .inferenceSource(InferenceSource.RULE_FALLBACK)
                 .build();
     }
 
@@ -724,7 +841,7 @@ public class AiServiceImpl implements AiService {
                 "Target a 10% reduction in discretionary spending."
         );
 
-        if ("Low Risk".equals(risk.getRiskLevel())) {
+        if (risk != null && "Low Risk".equals(risk.getRiskLevel())) {
             cat = "Maintain & Grow Wealth";
             text = "Your financial habits are robust with healthy cash reserves. Consider investing surplus capital for inflation-beating long-term growth.";
             actions = List.of(
@@ -736,11 +853,57 @@ public class AiServiceImpl implements AiService {
 
         return AiRecommendationResponse.builder()
                 .category(cat)
-                .topDriver(risk.getTopDriver())
+                .topDriver(risk != null ? risk.getTopDriver() : "expense_to_income_ratio")
                 .recommendationText(text)
                 .actionItems(actions)
                 .isApplied(false)
+                .inferenceSource(InferenceSource.RULE_FALLBACK)
                 .build();
+    }
+
+    private AiAnalysisResponse buildErrorAnalysisResponse(InferenceSource source, String message) {
+        FinancialRiskResponse risk = FinancialRiskResponse.builder()
+                .inferenceSource(source)
+                .riskLevel(source == InferenceSource.INSUFFICIENT_DATA ? "Insufficient Data" :
+                           source == InferenceSource.INVALID_FEATURES ? "Invalid Features" : "Service Unavailable")
+                .financialHealthScore(BigDecimal.ZERO)
+                .riskProbability(BigDecimal.ZERO)
+                .topDriver("N/A")
+                .topDriverReadable(message)
+                .drivers(Collections.emptyList())
+                .build();
+
+        ExpenseForecastResponse forecast = ExpenseForecastResponse.builder()
+                .inferenceSource(source == InferenceSource.INSUFFICIENT_DATA ? InferenceSource.INSUFFICIENT_HISTORY : source)
+                .forecastMonths(0)
+                .food(Collections.emptyList())
+                .nonFood(Collections.emptyList())
+                .total(Collections.emptyList())
+                .build();
+
+        AiRecommendationResponse rec = AiRecommendationResponse.builder()
+                .inferenceSource(source)
+                .category(source == InferenceSource.INSUFFICIENT_DATA ? "Action Required" : "Notice")
+                .topDriver("N/A")
+                .recommendationText(message)
+                .actionItems(Collections.emptyList())
+                .isApplied(false)
+                .build();
+
+        return AiAnalysisResponse.builder()
+                .risk(risk)
+                .forecast(forecast)
+                .recommendation(rec)
+                .build();
+    }
+
+    private InferenceSource parseInferenceSource(String src) {
+        if (src == null || src.isBlank()) return InferenceSource.ML_MODEL;
+        try {
+            return InferenceSource.valueOf(src.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return InferenceSource.ML_MODEL;
+        }
     }
 
     @Override

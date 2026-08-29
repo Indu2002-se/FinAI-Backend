@@ -1,12 +1,16 @@
 package com.finai.backend.service;
 
+import com.finai.backend.dto.response.AiAnalysisResponse;
 import com.finai.backend.dto.response.ExpenseForecastResponse;
 import com.finai.backend.dto.response.FinancialRiskResponse;
 import com.finai.backend.dto.response.SavingsPlanResponse;
+import com.finai.backend.entity.Expense;
 import com.finai.backend.entity.SavingsGoal;
 import com.finai.backend.entity.User;
 import com.finai.backend.entity.UserProfile;
+import com.finai.backend.entity.enums.ExpenseCategory;
 import com.finai.backend.entity.enums.GoalStatus;
+import com.finai.backend.entity.enums.InferenceSource;
 import com.finai.backend.entity.enums.RoleType;
 import com.finai.backend.repository.*;
 import com.finai.backend.service.interfaces.AiService;
@@ -46,6 +50,9 @@ public class AiServiceTest {
     private SavingsGoalRepository savingsGoalRepository;
 
     @Autowired
+    private ExpenseRepository expenseRepository;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     private User testUser;
@@ -82,6 +89,29 @@ public class AiServiceTest {
                 .creditScore(750)
                 .build();
         userProfileRepository.save(profile);
+
+        // Seed 3 months of expenses for testUser
+        expenseRepository.save(Expense.builder()
+                .user(testUser)
+                .description("Food M0")
+                .amount(new BigDecimal("25000.00"))
+                .category(ExpenseCategory.FOOD)
+                .expenseDate(LocalDate.now())
+                .build());
+        expenseRepository.save(Expense.builder()
+                .user(testUser)
+                .description("Food M-1")
+                .amount(new BigDecimal("24000.00"))
+                .category(ExpenseCategory.FOOD)
+                .expenseDate(LocalDate.now().minusMonths(1))
+                .build());
+        expenseRepository.save(Expense.builder()
+                .user(testUser)
+                .description("Food M-2")
+                .amount(new BigDecimal("23000.00"))
+                .category(ExpenseCategory.FOOD)
+                .expenseDate(LocalDate.now().minusMonths(2))
+                .build());
     }
 
     @Test
@@ -137,5 +167,104 @@ public class AiServiceTest {
         assertNotNull(plan.getMilestones());
         assertFalse(plan.getMilestones().isEmpty());
         assertNotNull(plan.getAiStrategyReport());
+    }
+
+    @Test
+    @DisplayName("runFullAnalysis with missing user profile should return INSUFFICIENT_DATA")
+    void runFullAnalysisWithMissingProfileShouldReturnInsufficientData() {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        User noProfileUser = User.builder()
+                .firstName("Bob")
+                .lastName("NoProfile")
+                .email("bob-" + suffix + "@example.com")
+                .password(passwordEncoder.encode("Pass12345!"))
+                .provider("LOCAL")
+                .enabled(true)
+                .emailVerified(true)
+                .build();
+        noProfileUser = userRepository.save(noProfileUser);
+
+        AiAnalysisResponse response = aiService.runFullAnalysis(noProfileUser);
+
+        assertNotNull(response);
+        assertNotNull(response.getRisk());
+        assertEquals(InferenceSource.INSUFFICIENT_DATA, response.getRisk().getInferenceSource());
+        assertNotNull(response.getForecast());
+        assertEquals(InferenceSource.INSUFFICIENT_HISTORY, response.getForecast().getInferenceSource());
+        assertNotNull(response.getRecommendation());
+        assertEquals(InferenceSource.INSUFFICIENT_DATA, response.getRecommendation().getInferenceSource());
+    }
+
+    @Test
+    @DisplayName("runFullAnalysis with fewer than 3 months of expenses should return INSUFFICIENT_DATA")
+    void runFullAnalysisWithInsufficientExpenseHistoryShouldReturnInsufficientData() {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        User limitedExpenseUser = User.builder()
+                .firstName("Dan")
+                .lastName("LowExpenses")
+                .email("dan-" + suffix + "@example.com")
+                .password(passwordEncoder.encode("Pass12345!"))
+                .provider("LOCAL")
+                .enabled(true)
+                .emailVerified(true)
+                .build();
+        limitedExpenseUser = userRepository.save(limitedExpenseUser);
+
+        userProfileRepository.save(UserProfile.builder()
+                .user(limitedExpenseUser)
+                .monthlyIncome(new BigDecimal("80000.00"))
+                .monthlyExpense(new BigDecimal("40000.00"))
+                .householdSize(2)
+                .age(29)
+                .build());
+
+        // Only 1 month of expenses seeded
+        expenseRepository.save(Expense.builder()
+                .user(limitedExpenseUser)
+                .amount(new BigDecimal("20000.00"))
+                .category(ExpenseCategory.FOOD)
+                .expenseDate(LocalDate.now())
+                .build());
+
+        AiAnalysisResponse response = aiService.runFullAnalysis(limitedExpenseUser);
+
+        assertNotNull(response);
+        assertNotNull(response.getRisk());
+        assertEquals(InferenceSource.INSUFFICIENT_DATA, response.getRisk().getInferenceSource());
+    }
+
+    @Test
+    @DisplayName("runFullAnalysis with complete data and offline FastAPI returns MODEL_UNAVAILABLE")
+    void runFullAnalysisWithCompleteDataReturnsModelUnavailableWhenFastApiOffline() {
+        AiAnalysisResponse response = aiService.runFullAnalysis(testUser);
+
+        assertNotNull(response);
+        assertNotNull(response.getRisk());
+        assertEquals(InferenceSource.MODEL_UNAVAILABLE, response.getRisk().getInferenceSource());
+        assertNotNull(response.getForecast());
+        assertEquals(InferenceSource.MODEL_UNAVAILABLE, response.getForecast().getInferenceSource());
+        assertNotNull(response.getRecommendation());
+        assertEquals(InferenceSource.MODEL_UNAVAILABLE, response.getRecommendation().getInferenceSource());
+    }
+
+    @Test
+    @DisplayName("getLatestRiskPrediction without profile returns INSUFFICIENT_DATA")
+    void getLatestRiskPredictionWithoutProfileReturnsInsufficientData() {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        User noProfileUser = User.builder()
+                .firstName("Charlie")
+                .lastName("Brown")
+                .email("charlie-" + suffix + "@example.com")
+                .password(passwordEncoder.encode("Pass12345!"))
+                .provider("LOCAL")
+                .enabled(true)
+                .emailVerified(true)
+                .build();
+        noProfileUser = userRepository.save(noProfileUser);
+
+        FinancialRiskResponse risk = aiService.getLatestRiskPrediction(noProfileUser);
+
+        assertNotNull(risk);
+        assertEquals(InferenceSource.INSUFFICIENT_DATA, risk.getInferenceSource());
     }
 }
