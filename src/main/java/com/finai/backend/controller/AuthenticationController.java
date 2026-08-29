@@ -1,6 +1,7 @@
 package com.finai.backend.controller;
 
 import com.finai.backend.dto.request.LoginRequest;
+import com.finai.backend.dto.request.FirebaseLoginRequest;
 import com.finai.backend.dto.request.RegisterRequest;
 import com.finai.backend.dto.response.ApiResponse;
 import com.finai.backend.dto.response.AuthenticationResponse;
@@ -43,6 +44,14 @@ public class AuthenticationController {
             @Valid @RequestBody LoginRequest request) {
         AuthenticationResponse response = authenticationService.login(request);
         return ResponseEntity.ok(ApiResponse.success("Login successful", response));
+    }
+
+    @PostMapping("/firebase")
+    @Operation(summary = "Sign in with a Firebase ID token")
+    public ResponseEntity<ApiResponse<AuthenticationResponse>> loginWithFirebase(
+            @Valid @RequestBody FirebaseLoginRequest request) {
+        AuthenticationResponse response = authenticationService.loginWithFirebaseIdToken(request.getIdToken());
+        return ResponseEntity.ok(ApiResponse.success("Google sign-in successful", response));
     }
 
     @GetMapping("/me")

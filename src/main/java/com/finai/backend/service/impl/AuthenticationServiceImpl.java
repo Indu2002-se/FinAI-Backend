@@ -13,6 +13,7 @@ import com.finai.backend.exception.ResourceNotFoundException;
 import com.finai.backend.repository.ChildProfileRepository;
 import com.finai.backend.repository.RoleRepository;
 import com.finai.backend.repository.UserRepository;
+import com.finai.backend.service.FirebaseTokenVerifier;
 import com.finai.backend.security.JwtService;
 import com.finai.backend.service.interfaces.AuthenticationService;
 import com.finai.backend.util.UserMapper;
@@ -24,6 +25,10 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import com.google.firebase.auth.FirebaseToken;
+
+import java.util.UUID;
 
 /**
  * Authentication service implementation
@@ -38,6 +43,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
+    private final FirebaseTokenVerifier firebaseTokenVerifier;
 
     @Override
     @Transactional
@@ -119,35 +125,23 @@ public class AuthenticationServiceImpl implements AuthenticationService {
             throw new AuthenticationException("Account is disabled");
         }
 
-        // Generate JWT token
-        UserDetails userDetails = org.springframework.security.core.userdetails.User.builder()
-                .username(user.getEmail())
-                .password(user.getPassword())
-                .authorities(user.getRoles().stream()
-                        .map(role -> role.getName().name())
-                        .toArray(String[]::new))
-                .build();
+        return createAuthenticationResponse(user);
+    }
 
-        String token = jwtService.generateToken(userDetails);
-
-        // Map to response
-        UserResponse userResponse = UserMapper.toUserResponse(user);
-        
-        // Create authentication response with userType
-        AuthenticationResponse response = AuthenticationResponse.builder()
-                .token(token)
-                .refreshToken(token)
-                .type("Bearer")
-                .user(userResponse)
-                .userType(determineUserType(user))
-                .build();
-
-        // If this is a child user, populate childProfileId
-        if ("CHILD".equals(response.getUserType())) {
-            response.setChildProfileId(findChildProfileId(user));
+    @Override
+    @Transactional
+    public AuthenticationResponse loginWithFirebaseIdToken(String idToken) {
+        FirebaseToken firebaseToken = firebaseTokenVerifier.verify(idToken);
+        String email = firebaseToken.getEmail();
+        if (email == null || email.isBlank()) {
+            throw new AuthenticationException("Google account does not provide an email address");
         }
 
-        return response;
+        User user = userRepository.findByEmail(email).orElseGet(() -> createGoogleUser(firebaseToken, email));
+        if (!user.getEnabled()) {
+            throw new AuthenticationException("Account is disabled");
+        }
+        return createAuthenticationResponse(user);
     }
 
     @Override
@@ -185,5 +179,58 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         return childProfileRepository.findByChildUser(user)
                 .map(childProfile -> childProfile.getId())
                 .orElse(null);
+    }
+
+    private User createGoogleUser(FirebaseToken firebaseToken, String email) {
+        Role userRole = roleRepository.findByName(RoleType.ROLE_USER)
+                .orElseThrow(() -> new ResourceNotFoundException("Default user role not found in database"));
+
+        String name = firebaseToken.getName();
+        String firstName = "User";
+        String lastName = "";
+        if (name != null && !name.isBlank()) {
+            String[] parts = name.trim().split("\\s+", 2);
+            firstName = parts[0];
+            if (parts.length > 1) {
+                lastName = parts[1];
+            }
+        }
+
+        User user = User.builder()
+                .firstName(firstName)
+                .lastName(lastName.isBlank() ? "Google" : lastName)
+                // A password is required by the existing schema but Google users
+                // authenticate only through a verified Firebase token.
+                .password(passwordEncoder.encode(UUID.randomUUID().toString()))
+                .email(email)
+                .provider("GOOGLE")
+                .enabled(true)
+                .emailVerified(Boolean.TRUE.equals(firebaseToken.isEmailVerified()))
+                .profileComplete(false)
+                .build();
+        user.addRole(userRole);
+        return userRepository.save(user);
+    }
+
+    private AuthenticationResponse createAuthenticationResponse(User user) {
+        UserDetails userDetails = org.springframework.security.core.userdetails.User.builder()
+                .username(user.getEmail())
+                .password(user.getPassword())
+                .authorities(user.getRoles().stream()
+                        .map(role -> role.getName().name())
+                        .toArray(String[]::new))
+                .build();
+        String token = jwtService.generateToken(userDetails);
+        AuthenticationResponse response = AuthenticationResponse.builder()
+                .token(token)
+                .refreshToken(token)
+                .type("Bearer")
+                .user(UserMapper.toUserResponse(user))
+                .userType(determineUserType(user))
+                .build();
+        if ("CHILD".equals(response.getUserType())) {
+            response.setChildProfileId(findChildProfileId(user));
+        }
+        return response;
     }
 }

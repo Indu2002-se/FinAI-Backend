@@ -26,6 +26,11 @@ public interface AuthenticationService {
     AuthenticationResponse login(LoginRequest request);
 
     /**
+     * Verify a Firebase ID token and issue the application's JWT response.
+     */
+    AuthenticationResponse loginWithFirebaseIdToken(String idToken);
+
+    /**
      * Get current authenticated user
      * @return user response
      */
