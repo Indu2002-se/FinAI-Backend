@@ -181,88 +181,261 @@ public class AiServiceImpl implements AiService {
         LocalDate startOfMonth = now.withDayOfMonth(1);
         LocalDate endOfMonth = now.withDayOfMonth(now.lengthOfMonth());
 
-        BigDecimal totalIncome = incomeRepository.sumAmountByUserAndDateRange(user, startOfMonth, endOfMonth);
-        if (totalIncome.compareTo(BigDecimal.ZERO) == 0 && profile != null && profile.getMonthlyIncome() != null) {
-            totalIncome = profile.getMonthlyIncome();
+        // 1. Income Data Extraction from Real Incomes
+        List<Income> monthlyIncomes = incomeRepository.findByUserAndIncomeDateBetween(user, startOfMonth, endOfMonth);
+        double employmentIncome = 0.0;
+        double otherIncome = 0.0;
+        double windfallIncome = 0.0;
+        double agriIncome = 0.0;
+
+        for (Income inc : monthlyIncomes) {
+            if (inc.getAmount() == null) continue;
+            double amt = inc.getAmount().doubleValue();
+            if (inc.getCategory() != null) {
+                switch (inc.getCategory()) {
+                    case SALARY:
+                    case BUSINESS:
+                    case FREELANCE:
+                        employmentIncome += amt;
+                        break;
+                    case WINDFALL:
+                        windfallIncome += amt;
+                        break;
+                    case AGRICULTURE:
+                        agriIncome += amt;
+                        break;
+                    case INVESTMENT:
+                    case OTHER:
+                    default:
+                        otherIncome += amt;
+                        break;
+                }
+            } else {
+                employmentIncome += amt;
+            }
         }
-        if (totalIncome.compareTo(BigDecimal.ZERO) == 0) {
-            totalIncome = new BigDecimal("100000.00");
+
+        double totalIncome = employmentIncome + otherIncome + windfallIncome + agriIncome;
+
+        // Fallback to UserProfile monthly income if no income ledger entries exist
+        if (totalIncome <= 0.0 && profile != null && profile.getMonthlyIncome() != null && profile.getMonthlyIncome().compareTo(BigDecimal.ZERO) > 0) {
+            totalIncome = profile.getMonthlyIncome().doubleValue();
+            if (profile.getEmploymentStatus() != null) {
+                switch (profile.getEmploymentStatus()) {
+                    case EMPLOYED:
+                    case SELF_EMPLOYED:
+                        employmentIncome = totalIncome;
+                        break;
+                    case RETIRED:
+                    case STUDENT:
+                    case UNEMPLOYED:
+                        otherIncome = totalIncome;
+                        break;
+                    default:
+                        employmentIncome = totalIncome;
+                        break;
+                }
+            } else {
+                employmentIncome = totalIncome;
+            }
         }
 
-        BigDecimal foodExp = expenseRepository.sumAmountByUserAndCategoryAndDateRange(user, ExpenseCategory.FOOD, startOfMonth, endOfMonth);
-        BigDecimal totalExp = expenseRepository.sumAmountByUserAndDateRange(user, startOfMonth, endOfMonth);
-        if (totalExp.compareTo(BigDecimal.ZERO) == 0 && profile != null && profile.getMonthlyExpense() != null) {
-            totalExp = profile.getMonthlyExpense();
-            foodExp = totalExp.multiply(new BigDecimal("0.45"));
-        }
-        if (totalExp.compareTo(BigDecimal.ZERO) == 0) {
-            totalExp = totalIncome.multiply(new BigDecimal("0.60"));
-            foodExp = totalExp.multiply(new BigDecimal("0.45"));
+        // Neutral default total income for uninitialized accounts
+        if (totalIncome <= 0.0) {
+            totalIncome = 50000.00; // Dataset median reference
+            employmentIncome = 50000.00;
         }
 
-        BigDecimal nonFoodExp = totalExp.subtract(foodExp);
-        if (nonFoodExp.compareTo(BigDecimal.ZERO) < 0) nonFoodExp = BigDecimal.ZERO;
+        double nonAgriIncome = employmentIncome + otherIncome + windfallIncome;
+        double transferIncome = 0.0; // Deterministic neutral baseline (no government transfer category in current schema)
 
-        BigDecimal totalDebt = debtRepository.sumTotalActiveDebtByUser(user);
-        if (profile != null && profile.getTotalDebt() != null && totalDebt.compareTo(BigDecimal.ZERO) == 0) {
-            totalDebt = profile.getTotalDebt();
+        // 2. Expense Data Extraction from Real Expenses
+        List<Expense> monthlyExpenses = expenseRepository.findByUserAndExpenseDateBetween(user, startOfMonth, endOfMonth);
+        double foodExp = 0.0;
+        double nonFoodExp = 0.0;
+
+        for (Expense exp : monthlyExpenses) {
+            if (exp.getAmount() == null) continue;
+            double amt = exp.getAmount().doubleValue();
+            if (exp.getCategory() == ExpenseCategory.FOOD) {
+                foodExp += amt;
+            } else {
+                nonFoodExp += amt;
+            }
         }
 
-        BigDecimal totalSavings = savingsRepository.sumTotalSavingsByUser(user);
+        double totalExp = foodExp + nonFoodExp;
 
-        BigDecimal surplus = totalIncome.subtract(totalExp);
-        double e2i = totalIncome.compareTo(BigDecimal.ZERO) > 0 ? totalExp.divide(totalIncome, 4, RoundingMode.HALF_UP).doubleValue() : 0.6;
-        double d2i = totalIncome.compareTo(BigDecimal.ZERO) > 0 ? totalDebt.divide(totalIncome, 4, RoundingMode.HALF_UP).doubleValue() : 0.0;
-        double savingsRatio = totalIncome.compareTo(BigDecimal.ZERO) > 0 ? totalSavings.divide(totalIncome, 4, RoundingMode.HALF_UP).doubleValue() : 0.2;
+        // Fallback to UserProfile monthly expense if no expense ledger entries exist
+        if (totalExp <= 0.0 && profile != null && profile.getMonthlyExpense() != null && profile.getMonthlyExpense().compareTo(BigDecimal.ZERO) > 0) {
+            totalExp = profile.getMonthlyExpense().doubleValue();
+            foodExp = totalExp * 0.35; // Standard household survey food ratio
+            nonFoodExp = totalExp - foodExp;
+        }
 
-        int householdSize = profile != null && profile.getHouseholdSize() != null ? profile.getHouseholdSize() : 3;
-        double perCapitaIncome = totalIncome.doubleValue() / Math.max(1, householdSize);
+        // Default expense based on total income if no profile/expense exists
+        if (totalExp <= 0.0) {
+            totalExp = totalIncome * 0.50;
+            foodExp = totalExp * 0.35;
+            nonFoodExp = totalExp - foodExp;
+        }
 
-        Map<String, Object> map = new HashMap<>();
-        map.put("age", profile != null && profile.getAge() != null ? profile.getAge() : 35);
-        map.put("gender", 1);
-        map.put("education", 2);
-        map.put("marital_status", 1);
-        map.put("household_size_f", householdSize);
-        map.put("employment_income", totalIncome.doubleValue() * 0.85);
-        map.put("other_income", totalIncome.doubleValue() * 0.15);
-        map.put("windfall_income", 0.0);
-        map.put("agri_income", 0.0);
-        map.put("non_agri_income", totalIncome.doubleValue());
-        map.put("transfer_income", 0.0);
-        map.put("total_income", totalIncome.doubleValue());
-        map.put("food_expenditure", foodExp.doubleValue());
-        map.put("nonfood_expenditure", nonFoodExp.doubleValue());
-        map.put("total_expenditure", totalExp.doubleValue());
-        map.put("expense_to_income_ratio", e2i);
-        map.put("financial_surplus", surplus.doubleValue());
+        // 3. Debt Data Extraction from Real Debts
+        List<Debt> userDebts = debtRepository.findByUser(user);
+        double totalDebt = 0.0;
+        int activeDebtRecords = 0;
+        Set<String> distinctSources = new HashSet<>();
+        double creditCardDebt = 0.0;
+        int ccCreditLines = 0;
+        double instalmentAmount = 0.0;
+        boolean hasDefaulted = false;
+
+        for (Debt d : userDebts) {
+            if (d.getStatus() == com.finai.backend.entity.enums.DebtStatus.ACTIVE) {
+                activeDebtRecords++;
+                double rem = (d.getRemainingAmount() != null) ? d.getRemainingAmount().doubleValue() : 0.0;
+                totalDebt += rem;
+                if (d.getSource() != null && !d.getSource().isBlank()) {
+                    distinctSources.add(d.getSource().trim().toLowerCase());
+                }
+                if (Boolean.TRUE.equals(d.getIsCreditCard())) {
+                    creditCardDebt += rem;
+                    ccCreditLines++;
+                } else if (d.getMonthlyPayment() != null) {
+                    instalmentAmount += d.getMonthlyPayment().doubleValue();
+                }
+            } else if (d.getStatus() == com.finai.backend.entity.enums.DebtStatus.DEFAULTED) {
+                hasDefaulted = true;
+            }
+        }
+
+        // Fallback to UserProfile total debt if no debt records exist
+        if (totalDebt <= 0.0 && profile != null && profile.getTotalDebt() != null && profile.getTotalDebt().compareTo(BigDecimal.ZERO) > 0) {
+            totalDebt = profile.getTotalDebt().doubleValue();
+            activeDebtRecords = 1;
+            distinctSources.add("primary_loan");
+        }
+
+        // 4. Savings and Ratios Calculation
+        BigDecimal totalSavingsBd = savingsRepository.sumTotalSavingsByUser(user);
+        double totalSavings = (totalSavingsBd != null) ? totalSavingsBd.doubleValue() : 0.0;
+
+        double financialSurplus = totalIncome - totalExp;
+        double expenseToIncomeRatio = totalIncome > 0 ? totalExp / totalIncome : 0.5;
+        double debtToIncomeRatio = totalIncome > 0 ? totalDebt / totalIncome : 0.0;
+        double savingsRatio = totalIncome > 0 ? financialSurplus / totalIncome : 0.0;
+
+        // 5. Demographic and Household Encodings
+        int householdSize = (profile != null && profile.getHouseholdSize() != null && profile.getHouseholdSize() > 0)
+                ? profile.getHouseholdSize() : 4;
+        int dependentsCount = (profile != null && profile.getDependentsCount() != null)
+                ? profile.getDependentsCount() : 0;
+        double perCapitaIncome = totalIncome / Math.max(1, householdSize);
+        double employmentCapacity = Math.max(0.1, (double) Math.max(1, householdSize - dependentsCount) / (double) householdSize);
+
+        double age = (profile != null && profile.getAge() != null && profile.getAge() > 0) ? profile.getAge().doubleValue() : 35.0;
+        double gender = encodeGender(profile != null ? profile.getGender() : null);
+        double education = encodeEducation(profile != null ? profile.getEducation() : null);
+        double maritalStatus = encodeMaritalStatus(profile != null ? profile.getMaritalStatus() : null);
+        double creditScore = (profile != null && profile.getCreditScore() != null && profile.getCreditScore() > 0)
+                ? profile.getCreditScore().doubleValue() : 650.0;
+
+        // 6. Credit and Institutional Features (Deterministic, documented defaults for retail app)
+        double hasCreditCardDebtFlag = (creditCardDebt > 0.0) ? 1.0 : 2.0; // 1=Yes, 2=No in training schema
+        double hasCreditmixMatch = (activeDebtRecords > 0 && ccCreditLines > 0) ? 1.0 : 0.0;
+        double creditDefaulted = hasDefaulted ? 1.0 : 0.0;
+        double creditClv = 0.0; // Customer Lifetime Value: 0.0 neutral baseline (bank internal metric)
+        double creditFraudTxn = 0.0; // Fraud txn count: 0.0 neutral baseline
+        double ccUtilizationRatio = (creditCardDebt > 0.0 && totalIncome > 0.0) ? Math.min(1.0, creditCardDebt / totalIncome) : 0.0;
+        double ccLatePayments = 0.0; // Late payment count: 0.0 neutral baseline
+        double ccDebtToIncomeRatio = (totalIncome > 0.0) ? creditCardDebt / totalIncome : 0.0;
+        double ccTotalSpendLastYear = 0.0; // Past year spend: 0.0 neutral baseline
+        double ccAvgTxnAmount = 0.0; // Avg transaction: 0.0 neutral baseline
+        double ccTotalTxns = 0.0; // Total txns: 0.0 neutral baseline
+        double ccTenureYears = 0.0; // CC account tenure: 0.0 neutral baseline
+        double vehicleOwnership = 0.0; // Neutral baseline (0 vehicles)
+        double instalmentGoodsFlag = (instalmentAmount > 0.0) ? 1.0 : 2.0; // 1=Yes, 2=No in training schema
+
+        // Construct exact 42-feature ordered map
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("age", age);
+        map.put("gender", gender);
+        map.put("education", education);
+        map.put("marital_status", maritalStatus);
+        map.put("household_size_f", (double) householdSize);
+        map.put("employment_income", employmentIncome);
+        map.put("other_income", otherIncome);
+        map.put("windfall_income", windfallIncome);
+        map.put("agri_income", agriIncome);
+        map.put("non_agri_income", nonAgriIncome);
+        map.put("transfer_income", transferIncome);
+        map.put("total_income", totalIncome);
+        map.put("food_expenditure", foodExp);
+        map.put("nonfood_expenditure", nonFoodExp);
+        map.put("total_expenditure", totalExp);
+        map.put("expense_to_income_ratio", expenseToIncomeRatio);
+        map.put("financial_surplus", financialSurplus);
         map.put("savings_ratio", savingsRatio);
         map.put("per_capita_income", perCapitaIncome);
-        map.put("employment_capacity", 1.0);
-        map.put("debt_amount", totalDebt.doubleValue());
-        map.put("debt_records", totalDebt.compareTo(BigDecimal.ZERO) > 0 ? 1 : 0);
-        map.put("debt_sources", totalDebt.compareTo(BigDecimal.ZERO) > 0 ? 1 : 0);
-        map.put("debt_to_income_ratio", d2i);
-        map.put("credit_card_debt", 0.0);
-        map.put("has_credit_card_debt", 0);
-        map.put("has_creditmix_match", 1);
-        map.put("credit_score", profile != null && profile.getCreditScore() != null ? profile.getCreditScore() : 720);
-        map.put("credit_defaulted", 0);
-        map.put("credit_clv", 150000.0);
-        map.put("credit_fraud_txn", 0);
-        map.put("cc_utilization_ratio", 0.15);
-        map.put("cc_late_payments", 0);
-        map.put("cc_credit_lines", 1);
-        map.put("cc_debt_to_income_ratio", 0.0);
-        map.put("cc_total_spend_last_year", totalExp.doubleValue() * 0.5);
-        map.put("cc_avg_txn_amount", 3500.0);
-        map.put("cc_total_txns", 24);
-        map.put("cc_tenure_years", 3.0);
-        map.put("vehicle_ownership", 1);
-        map.put("instalment_goods_flag", 0);
-        map.put("instalment_amount", 0.0);
+        map.put("employment_capacity", employmentCapacity);
+        map.put("debt_amount", totalDebt);
+        map.put("debt_records", (double) activeDebtRecords);
+        map.put("debt_sources", (double) Math.max(activeDebtRecords > 0 ? 1 : 0, distinctSources.size()));
+        map.put("debt_to_income_ratio", debtToIncomeRatio);
+        map.put("credit_card_debt", creditCardDebt);
+        map.put("has_credit_card_debt", hasCreditCardDebtFlag);
+        map.put("has_creditmix_match", hasCreditmixMatch);
+        map.put("credit_score", creditScore);
+        map.put("credit_defaulted", creditDefaulted);
+        map.put("credit_clv", creditClv);
+        map.put("credit_fraud_txn", creditFraudTxn);
+        map.put("cc_utilization_ratio", ccUtilizationRatio);
+        map.put("cc_late_payments", ccLatePayments);
+        map.put("cc_credit_lines", (double) ccCreditLines);
+        map.put("cc_debt_to_income_ratio", ccDebtToIncomeRatio);
+        map.put("cc_total_spend_last_year", ccTotalSpendLastYear);
+        map.put("cc_avg_txn_amount", ccAvgTxnAmount);
+        map.put("cc_total_txns", ccTotalTxns);
+        map.put("cc_tenure_years", ccTenureYears);
+        map.put("vehicle_ownership", vehicleOwnership);
+        map.put("instalment_goods_flag", instalmentGoodsFlag);
+        map.put("instalment_amount", instalmentAmount);
+
+        log.info("Constructed Model 1 feature vector with {} features for userId: {} (Income={}, Exp={}, Debt={}, Surplus={})",
+                map.size(), user.getId(), totalIncome, totalExp, totalDebt, financialSurplus);
 
         return map;
+    }
+
+    private double encodeGender(String gender) {
+        if (gender == null) return 1.0;
+        String g = gender.trim().toUpperCase();
+        if (g.startsWith("F") || g.contains("FEMALE")) {
+            return 2.0;
+        }
+        return 1.0;
+    }
+
+    private double encodeEducation(String education) {
+        if (education == null) return 10.0;
+        String e = education.trim().toUpperCase();
+        if (e.contains("DOCTOR") || e.contains("PHD")) return 19.0;
+        if (e.contains("MASTER") || e.contains("POST")) return 16.0;
+        if (e.contains("BACHELOR") || e.contains("DEGREE") || e.contains("UNDERGRADUATE")) return 13.0;
+        if (e.contains("DIPLOMA") || e.contains("VOCATIONAL")) return 11.0;
+        if (e.contains("ADVANCED") || e.contains("A_LEVEL") || e.contains("A/L") || e.contains("SECONDARY_HIGHER")) return 10.0;
+        if (e.contains("ORDINARY") || e.contains("O_LEVEL") || e.contains("O/L") || e.contains("SECONDARY")) return 8.0;
+        if (e.contains("PRIMARY")) return 5.0;
+        return 10.0; // Dataset median reference
+    }
+
+    private double encodeMaritalStatus(String maritalStatus) {
+        if (maritalStatus == null) return 1.0;
+        String m = maritalStatus.trim().toUpperCase();
+        if (m.contains("MARRIED")) return 2.0;
+        if (m.contains("WIDOW")) return 3.0;
+        if (m.contains("DIVORCE") || m.contains("SEPARAT")) return 4.0;
+        return 1.0; // Single
     }
 
     private List<Map<String, Object>> buildExpenseHistory(User user) {
