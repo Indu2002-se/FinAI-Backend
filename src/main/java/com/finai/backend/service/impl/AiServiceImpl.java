@@ -175,7 +175,7 @@ public class AiServiceImpl implements AiService {
         List<ExpenseForecast> forecasts = expenseForecastRepository.findByUserOrderByForecastDateAsc(user);
         if (forecasts.isEmpty()) {
             List<Map<String, Object>> history = buildExpenseHistory(user);
-            if (history == null || history.size() < 3) {
+            if (history == null || history.size() < 12) {
                 return ExpenseForecastResponse.builder()
                         .inferenceSource(InferenceSource.INSUFFICIENT_HISTORY)
                         .forecastMonths(0)
@@ -530,7 +530,7 @@ public class AiServiceImpl implements AiService {
         List<Map<String, Object>> history = new ArrayList<>();
         LocalDate now = LocalDate.now();
 
-        for (int i = 5; i >= 0; i--) {
+        for (int i = 11; i >= 0; i--) {
             LocalDate monthDate = now.minusMonths(i);
             LocalDate start = monthDate.withDayOfMonth(1);
             LocalDate end = monthDate.withDayOfMonth(monthDate.lengthOfMonth());
@@ -556,8 +556,8 @@ public class AiServiceImpl implements AiService {
         // Sort records chronologically
         history.sort(Comparator.comparing(m -> (String) m.get("date")));
 
-        if (history.size() < 3) {
-            log.warn("Insufficient expense history for user id: {}. Required at least 3 months, found {}",
+        if (history.size() < 12) {
+            log.warn("Insufficient expense history for user id: {}. Required at least 12 months, found {}",
                     user.getId(), history.size());
             return null;
         }

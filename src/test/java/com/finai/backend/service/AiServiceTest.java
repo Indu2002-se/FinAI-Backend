@@ -90,28 +90,16 @@ public class AiServiceTest {
                 .build();
         userProfileRepository.save(profile);
 
-        // Seed 3 months of expenses for testUser
-        expenseRepository.save(Expense.builder()
-                .user(testUser)
-                .description("Food M0")
-                .amount(new BigDecimal("25000.00"))
-                .category(ExpenseCategory.FOOD)
-                .expenseDate(LocalDate.now())
-                .build());
-        expenseRepository.save(Expense.builder()
-                .user(testUser)
-                .description("Food M-1")
-                .amount(new BigDecimal("24000.00"))
-                .category(ExpenseCategory.FOOD)
-                .expenseDate(LocalDate.now().minusMonths(1))
-                .build());
-        expenseRepository.save(Expense.builder()
-                .user(testUser)
-                .description("Food M-2")
-                .amount(new BigDecimal("23000.00"))
-                .category(ExpenseCategory.FOOD)
-                .expenseDate(LocalDate.now().minusMonths(2))
-                .build());
+        // Seed 12 months of expenses for testUser
+        for (int m = 0; m < 12; m++) {
+            expenseRepository.save(Expense.builder()
+                    .user(testUser)
+                    .description("Food M-" + m)
+                    .amount(new BigDecimal("25000.00"))
+                    .category(ExpenseCategory.FOOD)
+                    .expenseDate(LocalDate.now().minusMonths(m))
+                    .build());
+        }
     }
 
     @Test
@@ -196,7 +184,7 @@ public class AiServiceTest {
     }
 
     @Test
-    @DisplayName("runFullAnalysis with fewer than 3 months of expenses should return INSUFFICIENT_DATA")
+    @DisplayName("runFullAnalysis with fewer than 12 months of expenses should return INSUFFICIENT_DATA")
     void runFullAnalysisWithInsufficientExpenseHistoryShouldReturnInsufficientData() {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         User limitedExpenseUser = User.builder()
