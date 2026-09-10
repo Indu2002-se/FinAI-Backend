@@ -2,11 +2,15 @@ package com.finai.backend.service.impl;
 
 import com.finai.backend.dto.request.WizardRequest;
 import com.finai.backend.dto.response.WizardResponse;
+import java.math.BigDecimal;
+import com.finai.backend.entity.Expense;
 import com.finai.backend.entity.User;
 import com.finai.backend.entity.UserProfile;
 import com.finai.backend.entity.WizardProfile;
+import com.finai.backend.entity.enums.ExpenseCategory;
 import com.finai.backend.exception.BadRequestException;
 import com.finai.backend.exception.ResourceNotFoundException;
+import com.finai.backend.repository.ExpenseRepository;
 import com.finai.backend.repository.UserProfileRepository;
 import com.finai.backend.repository.UserRepository;
 import com.finai.backend.repository.WizardProfileRepository;
@@ -18,6 +22,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.time.LocalDate;
+import java.util.List;
 
 /**
  * Wizard service implementation
@@ -30,6 +36,7 @@ public class WizardServiceImpl implements WizardService {
     private final WizardProfileRepository wizardProfileRepository;
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
+    private final ExpenseRepository expenseRepository;
     private final AiService aiService;
 
     @Override
@@ -69,6 +76,9 @@ public class WizardServiceImpl implements WizardService {
         // Mark user profile as complete
         user.setProfileComplete(true);
         userRepository.save(user);
+
+        // Initialize expense history from user-entered wizard expense if none exists
+        initializeUserExpensesFromWizard(user, request.getMonthlyExpense());
 
         // Trigger AI analysis asynchronously (fire-and-forget, does not block response)
         triggerAiAnalysis(user);
@@ -121,6 +131,9 @@ public class WizardServiceImpl implements WizardService {
             userRepository.save(user);
         }
 
+        // Initialize expense history from user-entered wizard expense if none exists
+        initializeUserExpensesFromWizard(user, request.getMonthlyExpense());
+
         // Re-trigger AI analysis
         triggerAiAnalysis(user);
 
@@ -129,11 +142,51 @@ public class WizardServiceImpl implements WizardService {
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
+    private void initializeUserExpensesFromWizard(User user, BigDecimal monthlyExpense) {
+        if (monthlyExpense == null || monthlyExpense.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        List<Expense> existing = expenseRepository.findByUserOrderByExpenseDateDesc(user);
+        if (!existing.isEmpty()) {
+            return; // Already has expense records, do not overwrite
+        }
+
+        LocalDate now = LocalDate.now();
+        BigDecimal foodPortion = monthlyExpense.multiply(new BigDecimal("0.35")).setScale(2, java.math.RoundingMode.HALF_UP);
+        BigDecimal nonFoodPortion = monthlyExpense.subtract(foodPortion).setScale(2, java.math.RoundingMode.HALF_UP);
+
+        for (int m = 0; m < 12; m++) {
+            LocalDate monthDate = now.minusMonths(m).withDayOfMonth(15);
+
+            expenseRepository.save(Expense.builder()
+                    .user(user)
+                    .amount(foodPortion)
+                    .category(ExpenseCategory.FOOD)
+                    .description("Monthly Food & Groceries (Baseline)")
+                    .expenseDate(monthDate)
+                    .build());
+
+            expenseRepository.save(Expense.builder()
+                    .user(user)
+                    .amount(nonFoodPortion)
+                    .category(ExpenseCategory.UTILITIES)
+                    .description("Monthly Living & Utilities (Baseline)")
+                    .expenseDate(monthDate)
+                    .build());
+        }
+        log.info("Initialized 12-month baseline expense history for user id: {} from wizard monthlyExpense: {}", user.getId(), monthlyExpense);
+    }
+
     private void syncUserProfile(User user, WizardRequest request) {
         UserProfile profile = userProfileRepository.findByUser(user).orElse(null);
         if (profile == null) {
             profile = UserProfile.builder()
                     .user(user)
+                    .age(request.getAge() != null && request.getAge() > 0 ? request.getAge() : 30)
+                    .gender(request.getGender() != null ? request.getGender() : "Male")
+                    .householdSize(request.getHouseholdSize() != null && request.getHouseholdSize() > 0 ? request.getHouseholdSize() : 1)
+                    .dependentsCount(request.getDependentsCount() != null ? request.getDependentsCount() : 0)
+                    .totalDebt(request.getCurrentDebt() != null ? request.getCurrentDebt() : BigDecimal.ZERO)
                     .monthlyIncome(request.getMonthlyIncome())
                     .monthlyExpense(request.getMonthlyExpense())
                     .savingsGoal(request.getSavingsGoal())
@@ -142,6 +195,11 @@ public class WizardServiceImpl implements WizardService {
                     .preferredCurrency(request.getPreferredCurrency().toUpperCase())
                     .build();
         } else {
+            if (request.getAge() != null && request.getAge() > 0) profile.setAge(request.getAge());
+            if (request.getGender() != null) profile.setGender(request.getGender());
+            if (request.getHouseholdSize() != null && request.getHouseholdSize() > 0) profile.setHouseholdSize(request.getHouseholdSize());
+            if (request.getDependentsCount() != null) profile.setDependentsCount(request.getDependentsCount());
+            if (request.getCurrentDebt() != null) profile.setTotalDebt(request.getCurrentDebt());
             profile.setMonthlyIncome(request.getMonthlyIncome());
             profile.setMonthlyExpense(request.getMonthlyExpense());
             profile.setSavingsGoal(request.getSavingsGoal());

@@ -21,7 +21,8 @@ public class UserProfile extends BaseEntity {
     private User user;
 
     @Column(name = "age")
-    private Integer age;
+    @Builder.Default
+    private Integer age = 30;
 
     @Column(name = "gender", length = 20)
     private String gender;

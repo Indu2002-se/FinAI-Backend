@@ -405,22 +405,14 @@ public class AiServiceImpl implements AiService {
         double savingsRatio = totalIncome > 0 ? financialSurplus / totalIncome : 0.0;
 
         // 5. Demographic and Household Encodings
-        // Validate required profile fields
-        if (profile.getAge() == null || profile.getAge() <= 0) {
-            log.warn("Age not available in UserProfile for user id: {}. Cannot construct features.", user.getId());
-            return null;
-        }
-        if (profile.getHouseholdSize() == null || profile.getHouseholdSize() <= 0) {
-            log.warn("HouseholdSize not available in UserProfile for user id: {}. Cannot construct features.", user.getId());
-            return null;
-        }
-        
-        int householdSize = profile.getHouseholdSize();
+        int householdSize = (profile.getHouseholdSize() != null && profile.getHouseholdSize() > 0)
+                ? profile.getHouseholdSize() : 1;
         int dependentsCount = (profile.getDependentsCount() != null) ? profile.getDependentsCount() : 0;
         double perCapitaIncome = totalIncome / Math.max(1, householdSize);
         double employmentCapacity = Math.max(0.1, (double) Math.max(1, householdSize - dependentsCount) / (double) householdSize);
 
-        double age = profile.getAge().doubleValue();
+        double age = (profile.getAge() != null && profile.getAge() > 0)
+                ? profile.getAge().doubleValue() : 30.0;
         double gender = encodeGender(profile.getGender());
         double education = encodeEducation(profile.getEducation());
         double maritalStatus = encodeMaritalStatus(profile.getMaritalStatus());

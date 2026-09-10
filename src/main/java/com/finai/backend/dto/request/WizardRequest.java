@@ -44,4 +44,10 @@ public class WizardRequest {
     @Size(min = 3, max = 3, message = "Currency code must be 3 characters (ISO 4217)")
     @Pattern(regexp = "^[A-Z]{3}$", message = "Invalid currency code format")
     private String preferredCurrency;
+
+    private Integer age;
+    private String gender;
+    private Integer householdSize;
+    private Integer dependentsCount;
+    private BigDecimal currentDebt;
 }
