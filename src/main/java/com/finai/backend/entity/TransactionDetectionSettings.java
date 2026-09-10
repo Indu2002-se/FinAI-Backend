@@ -18,11 +18,11 @@ public class TransactionDetectionSettings extends BaseEntity {
 
     @Column(name = "sms_enabled", nullable = false)
     @Builder.Default
-    private Boolean smsEnabled = false;
+    private Boolean smsEnabled = true;
 
     @Column(name = "notification_enabled", nullable = false)
     @Builder.Default
-    private Boolean notificationEnabled = false;
+    private Boolean notificationEnabled = true;
 
     @Column(name = "confirmation_required", nullable = false)
     @Builder.Default

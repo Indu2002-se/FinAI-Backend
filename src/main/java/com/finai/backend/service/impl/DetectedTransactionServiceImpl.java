@@ -299,8 +299,8 @@ public class DetectedTransactionServiceImpl implements DetectedTransactionServic
                 .orElseGet(() -> settingsRepository.save(
                         TransactionDetectionSettings.builder()
                                 .user(user)
-                                .smsEnabled(false)
-                                .notificationEnabled(false)
+                                .smsEnabled(true)
+                                .notificationEnabled(true)
                                 .confirmationRequired(true)
                                 .build()
                 ));
