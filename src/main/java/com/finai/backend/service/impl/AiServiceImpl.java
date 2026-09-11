@@ -130,6 +130,16 @@ public class AiServiceImpl implements AiService {
             recommendationResponse.setInferenceSource(InferenceSource.MODEL_UNAVAILABLE);
         }
 
+        // If ML returned empty forecast but we have enough history, keep a usable estimate.
+        if ((forecastResponse == null
+                || forecastResponse.getTotal() == null
+                || forecastResponse.getTotal().isEmpty())
+                && history != null
+                && history.size() >= 3) {
+            forecastResponse = generateFallbackForecast(history);
+            forecastResponse.setInferenceSource(InferenceSource.RULE_FALLBACK);
+        }
+
         log.info("AI analysis completed. Inferences: Risk={}, Forecast={}, Recommendation={}",
                 riskResponse != null ? riskResponse.getInferenceSource() : "null",
                 forecastResponse != null ? forecastResponse.getInferenceSource() : "null",
