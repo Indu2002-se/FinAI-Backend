@@ -122,6 +122,7 @@ public class FirebaseTokenVerifier {
         // 4. Well-known candidate files on disk
         String[] candidatePaths = new String[]{
                 "firebase-service-account.json",
+                "finai-a6f0f-firebase-adminsdk-fbsvc-0df2605496.json",
                 "serviceAccountKey.json",
                 "firebase-adminsdk.json",
                 "firebase-key.json",
@@ -146,6 +147,7 @@ public class FirebaseTokenVerifier {
         // 5. Classpath resources
         String[] classpathCandidates = new String[]{
                 "classpath:firebase-service-account.json",
+                "classpath:finai-a6f0f-firebase-adminsdk-fbsvc-0df2605496.json",
                 "classpath:serviceAccountKey.json",
                 "classpath:firebase-key.json"
         };
