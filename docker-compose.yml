@@ -47,6 +47,8 @@ services:
       SERVER_PORT: 8080
 
       GOOGLE_APPLICATION_CREDENTIALS: /app/secrets/firebase-service-account.json
+      FIREBASE_CREDENTIALS_PATH: /app/secrets/firebase-service-account.json
+      FIREBASE_PROJECT_ID: finai-a6f0f
 
       DATABASE_URL: jdbc:mysql://mysql:3306/finai_prod?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
       DATABASE_USERNAME: ${DATABASE_USERNAME}

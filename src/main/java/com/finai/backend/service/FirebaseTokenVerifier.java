@@ -22,8 +22,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 /**
- * Verifies Firebase tokens using configured credentials, environment variables,
- * well-known key file paths, or Application Default Credentials.
+ * Verifies Firebase ID tokens using an explicit service-account key.
+ * Does not use Application Default Credentials — on non-GCP hosts (e.g. EC2)
+ * ADC probes the metadata server and can block for 1–2 minutes per attempt.
  */
 @Slf4j
 @Service
@@ -36,6 +37,10 @@ public class FirebaseTokenVerifier {
     private String projectId;
 
     private final ResourceLoader resourceLoader;
+
+    /** True after the single startup (or first) init attempt — never re-walk credential paths. */
+    private volatile boolean initAttempted = false;
+    private volatile boolean initialized = false;
     private String lastInitError = null;
 
     public FirebaseTokenVerifier(ResourceLoader resourceLoader) {
@@ -48,28 +53,36 @@ public class FirebaseTokenVerifier {
     }
 
     private synchronized boolean tryInitialize() {
-        if (!FirebaseApp.getApps().isEmpty()) {
+        if (initialized || !FirebaseApp.getApps().isEmpty()) {
+            initialized = true;
             return true;
         }
 
+        // Fail fast on later requests — do not re-run slow credential resolution.
+        if (initAttempted) {
+            return false;
+        }
+        initAttempted = true;
+
+        long started = System.currentTimeMillis();
         try {
             GoogleCredentials credentials = resolveCredentials();
-            FirebaseOptions.Builder builder = FirebaseOptions.builder();
-
-            if (credentials != null) {
-                builder.setCredentials(credentials);
-            }
+            FirebaseOptions.Builder builder = FirebaseOptions.builder()
+                    .setCredentials(credentials);
             if (projectId != null && !projectId.isBlank()) {
                 builder.setProjectId(projectId);
             }
 
             FirebaseApp.initializeApp(builder.build());
-            log.info("Firebase Admin SDK successfully initialized (Project: {})", projectId);
+            initialized = true;
             lastInitError = null;
+            log.info("Firebase Admin SDK successfully initialized in {}ms (Project: {})",
+                    System.currentTimeMillis() - started, projectId);
             return true;
         } catch (Exception e) {
             lastInitError = e.getMessage();
-            log.warn("Firebase Admin SDK could not be initialized at startup: {}", e.getMessage());
+            log.error("Firebase Admin SDK could not be initialized ({}ms): {}",
+                    System.currentTimeMillis() - started, e.getMessage());
             return false;
         }
     }
@@ -86,6 +99,7 @@ public class FirebaseTokenVerifier {
                 log.info("Loaded Firebase credentials from configured path: {}", configuredPath);
                 return GoogleCredentials.fromStream(stream);
             }
+            log.warn("Configured Firebase credentials path could not be loaded: {}", configuredPath);
         }
 
         // 2. Direct JSON content via FIREBASE_CREDENTIALS_JSON or FIREBASE_SERVICE_ACCOUNT_JSON
@@ -109,14 +123,23 @@ public class FirebaseTokenVerifier {
             return GoogleCredentials.fromStream(new ByteArrayInputStream(bytes));
         }
 
-        // 3. GOOGLE_APPLICATION_CREDENTIALS environment variable
+        // 3. GOOGLE_APPLICATION_CREDENTIALS — must exist and be readable (no silent skip → ADC)
         String googleAppCreds = System.getenv("GOOGLE_APPLICATION_CREDENTIALS");
         if (googleAppCreds != null && !googleAppCreds.isBlank()) {
             File file = new File(googleAppCreds.trim());
-            if (file.exists() && file.isFile()) {
-                log.info("Loaded Firebase credentials from GOOGLE_APPLICATION_CREDENTIALS: {}", googleAppCreds);
-                return GoogleCredentials.fromStream(new FileInputStream(file));
+            if (!file.exists() || !file.isFile()) {
+                throw new IllegalStateException(
+                        "GOOGLE_APPLICATION_CREDENTIALS is set to '" + googleAppCreds
+                                + "' but the file is missing. Mount firebase-service-account.json "
+                                + "or set FIREBASE_CREDENTIALS_PATH.");
             }
+            if (!file.canRead()) {
+                throw new IllegalStateException(
+                        "GOOGLE_APPLICATION_CREDENTIALS file is not readable: " + googleAppCreds
+                                + " (fix permissions: chmod 644 on the host file).");
+            }
+            log.info("Loaded Firebase credentials from GOOGLE_APPLICATION_CREDENTIALS: {}", googleAppCreds);
+            return GoogleCredentials.fromStream(new FileInputStream(file));
         }
 
         // 4. Well-known candidate files on disk
@@ -126,19 +149,16 @@ public class FirebaseTokenVerifier {
                 "serviceAccountKey.json",
                 "firebase-adminsdk.json",
                 "firebase-key.json",
+                "/app/secrets/firebase-service-account.json",
                 "/app/firebase-service-account.json",
                 "/app/serviceAccountKey.json",
                 "/etc/finai/firebase-service-account.json",
-                "/etc/finai/serviceAccountKey.json",
-                "/home/ubuntu/firebase-service-account.json",
-                "/home/ubuntu/serviceAccountKey.json",
-                "/root/firebase-service-account.json",
-                "/root/serviceAccountKey.json"
+                "/etc/finai/serviceAccountKey.json"
         };
 
         for (String path : candidatePaths) {
             File file = new File(path);
-            if (file.exists() && file.isFile()) {
+            if (file.exists() && file.isFile() && file.canRead()) {
                 log.info("Loaded Firebase credentials from well-known location: {}", file.getAbsolutePath());
                 return GoogleCredentials.fromStream(new FileInputStream(file));
             }
@@ -160,15 +180,12 @@ public class FirebaseTokenVerifier {
             }
         }
 
-        // 6. Application Default Credentials (e.g. GCP metadata)
-        try {
-            log.info("Attempting Google Application Default Credentials fallback...");
-            return GoogleCredentials.getApplicationDefault();
-        } catch (Exception e) {
-            throw new IllegalStateException(
-                    "No Firebase service account key found. Please set GOOGLE_APPLICATION_CREDENTIALS, " +
-                    "FIREBASE_CREDENTIALS_PATH, or place 'firebase-service-account.json' in the application directory.", e);
-        }
+        // Do NOT call GoogleCredentials.getApplicationDefault() — on EC2 that hangs
+        // for ~60–120s probing the GCP metadata IP (169.254.169.254).
+        throw new IllegalStateException(
+                "No Firebase service account key found. Set FIREBASE_CREDENTIALS_PATH or "
+                        + "GOOGLE_APPLICATION_CREDENTIALS to a readable firebase-service-account.json, "
+                        + "or place the key on the classpath.");
     }
 
     private InputStream loadInputStreamFromLocation(String location) {
@@ -181,39 +198,49 @@ public class FirebaseTokenVerifier {
             } else {
                 File file = new File(location);
                 if (file.exists() && file.isFile()) {
+                    if (!file.canRead()) {
+                        log.warn("Firebase credentials file exists but is not readable: {}", location);
+                        return null;
+                    }
                     return new FileInputStream(file);
                 }
-                // Try classpath as fallback
                 Resource resource = resourceLoader.getResource("classpath:" + location);
                 if (resource.exists()) {
                     return resource.getInputStream();
                 }
             }
         } catch (Exception e) {
-            log.debug("Could not load resource from location {}: {}", location, e.getMessage());
+            log.warn("Could not load Firebase credentials from {}: {}", location, e.getMessage());
         }
         return null;
     }
 
     public FirebaseToken verify(String idToken) {
-        if (FirebaseApp.getApps().isEmpty()) {
-            boolean initialized = tryInitialize();
-            if (!initialized) {
-                log.error("Google sign-in attempt failed because Firebase Admin is not initialized. Error: {}", lastInitError);
+        if (!initialized && FirebaseApp.getApps().isEmpty()) {
+            boolean ok = tryInitialize();
+            if (!ok) {
+                log.error("Google sign-in failed: Firebase Admin not initialized. Error: {}", lastInitError);
                 throw new AuthenticationException(
-                        "Google sign-in is not configured on the server. " +
-                        (lastInitError != null ? "Reason: " + lastInitError : "Service account key missing."));
+                        "Google sign-in is not configured on the server. "
+                                + (lastInitError != null ? "Reason: " + lastInitError : "Service account key missing."));
             }
         }
 
         try {
-            return FirebaseAuth.getInstance().verifyIdToken(idToken);
+            long started = System.currentTimeMillis();
+            FirebaseToken token = FirebaseAuth.getInstance().verifyIdToken(idToken);
+            log.debug("Firebase ID token verified in {}ms", System.currentTimeMillis() - started);
+            return token;
         } catch (FirebaseAuthException exception) {
-            log.warn("Firebase ID token verification failed: {} (code: {})", exception.getMessage(), exception.getErrorCode());
-            throw new AuthenticationException("Invalid or expired Google sign-in token: " + exception.getMessage());
+            log.warn("Firebase ID token verification failed: {} (code: {})",
+                    exception.getMessage(), exception.getErrorCode());
+            throw new AuthenticationException(
+                    "Invalid or expired Google sign-in token: " + exception.getMessage());
         } catch (Exception exception) {
-            log.error("Unexpected error during Firebase token verification: {}", exception.getMessage(), exception);
-            throw new AuthenticationException("Failed to verify Google sign-in token: " + exception.getMessage());
+            log.error("Unexpected error during Firebase token verification: {}",
+                    exception.getMessage(), exception);
+            throw new AuthenticationException(
+                    "Failed to verify Google sign-in token: " + exception.getMessage());
         }
     }
 }
