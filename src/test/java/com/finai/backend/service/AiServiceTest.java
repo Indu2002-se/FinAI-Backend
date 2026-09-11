@@ -184,7 +184,7 @@ public class AiServiceTest {
     }
 
     @Test
-    @DisplayName("runFullAnalysis with fewer than 12 months of expenses should return INSUFFICIENT_DATA")
+    @DisplayName("runFullAnalysis with fewer than 3 months of expenses should return INSUFFICIENT_DATA")
     void runFullAnalysisWithInsufficientExpenseHistoryShouldReturnInsufficientData() {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         User limitedExpenseUser = User.builder()

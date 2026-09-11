@@ -69,7 +69,7 @@ public class AiServiceImpl implements AiService {
                     "Feature validation failed: " + String.join("; ", validationResult.getErrors()));
         }
 
-        // 3. Build Expense History (minimum 3 months required) (Task 3.1, 5.1)
+        // 3. Build Expense History (minimum 3 distinct months required)
         List<Map<String, Object>> history = buildExpenseHistory(user);
         if (history == null || history.size() < 3) {
             log.warn("Cannot run AI analysis: fewer than 3 months of expense history for user id: {}. Returning INSUFFICIENT_DATA.", user.getId());
@@ -175,7 +175,7 @@ public class AiServiceImpl implements AiService {
         List<ExpenseForecast> forecasts = expenseForecastRepository.findByUserOrderByForecastDateAsc(user);
         if (forecasts.isEmpty()) {
             List<Map<String, Object>> history = buildExpenseHistory(user);
-            if (history == null || history.size() < 12) {
+            if (history == null || history.size() < 3) {
                 return ExpenseForecastResponse.builder()
                         .inferenceSource(InferenceSource.INSUFFICIENT_HISTORY)
                         .forecastMonths(0)
@@ -184,6 +184,8 @@ public class AiServiceImpl implements AiService {
                         .total(Collections.emptyList())
                         .build();
             }
+            // Enough history but no persisted forecast yet — return a usable fallback.
+            // Full ML analysis is triggered when expenses are created/updated.
             ExpenseForecastResponse fallback = generateFallbackForecast(history);
             fallback.setInferenceSource(InferenceSource.RULE_FALLBACK);
             return fallback;
@@ -548,13 +550,12 @@ public class AiServiceImpl implements AiService {
         // Sort records chronologically
         history.sort(Comparator.comparing(m -> (String) m.get("date")));
 
-        if (history.size() < 12) {
-            log.warn("Insufficient expense history for user id: {}. Required at least 12 months, found {}",
+        if (history.size() < 3) {
+            log.warn("Insufficient expense history for user id: {}. Required at least 3 distinct months, found {}",
                     user.getId(), history.size());
-            return null;
+        } else {
+            log.info("Successfully constructed expense history with {} months for user id: {}", history.size(), user.getId());
         }
-
-        log.info("Successfully constructed expense history with {} months for user id: {}", history.size(), user.getId());
         return history;
     }
 
