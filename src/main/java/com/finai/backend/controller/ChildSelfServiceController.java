@@ -89,4 +89,16 @@ public class ChildSelfServiceController {
         List<QuizResultResponse> response = childService.getChildQuizHistory(user);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
+
+    @PostMapping("/goals/{goalId}/progress")
+    @Operation(summary = "Add money toward own savings goal")
+    public ResponseEntity<ApiResponse<SavingsGoalResponse>> addOwnGoalProgress(
+            @PathVariable Long goalId,
+            @RequestBody java.util.Map<String, Object> payload) {
+        User user = securityUtils.getCurrentUser();
+        java.math.BigDecimal amount = java.math.BigDecimal.valueOf(
+                ((Number) payload.getOrDefault("amountToAdd", payload.getOrDefault("amount", 0.0))).doubleValue());
+        SavingsGoalResponse response = childService.addOwnGoalProgress(goalId, amount, user);
+        return ResponseEntity.ok(ApiResponse.success("Goal progress updated", response));
+    }
 }

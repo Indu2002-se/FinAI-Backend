@@ -1,9 +1,14 @@
 package com.finai.backend.controller;
 
 import com.finai.backend.dto.request.ChildProfileRequest;
+import com.finai.backend.dto.request.QuizSubmitRequest;
 import com.finai.backend.dto.request.SavingsGoalRequest;
 import com.finai.backend.dto.response.ApiResponse;
+import com.finai.backend.dto.response.ChildDashboardResponse;
 import com.finai.backend.dto.response.ChildProfileResponse;
+import com.finai.backend.dto.response.QuizResponse;
+import com.finai.backend.dto.response.QuizResultResponse;
+import com.finai.backend.dto.response.RewardResponse;
 import com.finai.backend.dto.response.SavingsGoalResponse;
 import com.finai.backend.entity.User;
 import com.finai.backend.service.interfaces.ChildService;
@@ -126,5 +131,77 @@ public class ChildManagementController {
         BigDecimal amount = BigDecimal.valueOf(((Number) payload.getOrDefault("amount", 0.0)).doubleValue());
         ChildProfileResponse response = childService.depositChildSavings(childId, amount, parent);
         return ResponseEntity.ok(ApiResponse.success("Deposit successful", response));
+    }
+
+    @GetMapping("/{childId}/dashboard")
+    @Operation(summary = "Get dashboard for a specific child (parent view)")
+    public ResponseEntity<ApiResponse<ChildDashboardResponse>> getChildDashboard(@PathVariable Long childId) {
+        User parent = securityUtils.getCurrentUser();
+        ChildDashboardResponse response = childService.getChildDashboardForParent(childId, parent);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @DeleteMapping("/{childId}/goals/{goalId}")
+    @Operation(summary = "Delete child savings goal")
+    public ResponseEntity<ApiResponse<Void>> deleteChildGoal(
+            @PathVariable Long childId,
+            @PathVariable Long goalId) {
+        User parent = securityUtils.getCurrentUser();
+        childService.deleteChildGoal(childId, goalId, parent);
+        return ResponseEntity.ok(ApiResponse.success("Child savings goal deleted", null));
+    }
+
+    @PostMapping("/{childId}/goals/{goalId}/progress")
+    @Operation(summary = "Add money toward a child savings goal")
+    public ResponseEntity<ApiResponse<SavingsGoalResponse>> addGoalProgress(
+            @PathVariable Long childId,
+            @PathVariable Long goalId,
+            @RequestBody Map<String, Object> payload) {
+        User parent = securityUtils.getCurrentUser();
+        BigDecimal amount = BigDecimal.valueOf(
+                ((Number) payload.getOrDefault("amountToAdd", payload.getOrDefault("amount", 0.0))).doubleValue());
+        SavingsGoalResponse response = childService.addGoalProgress(childId, goalId, amount, parent);
+        return ResponseEntity.ok(ApiResponse.success("Goal progress updated", response));
+    }
+
+    @GetMapping("/{childId}/quizzes")
+    @Operation(summary = "List quizzes for a child (parent view)")
+    public ResponseEntity<ApiResponse<List<QuizResponse>>> getChildQuizzes(@PathVariable Long childId) {
+        User parent = securityUtils.getCurrentUser();
+        return ResponseEntity.ok(ApiResponse.success(childService.getQuizzesForParent(childId, parent)));
+    }
+
+    @GetMapping("/{childId}/quizzes/{quizId}")
+    @Operation(summary = "Get quiz detail for a child (parent view)")
+    public ResponseEntity<ApiResponse<QuizResponse>> getChildQuiz(
+            @PathVariable Long childId,
+            @PathVariable Long quizId) {
+        User parent = securityUtils.getCurrentUser();
+        return ResponseEntity.ok(ApiResponse.success(childService.getQuizByIdForParent(childId, quizId, parent)));
+    }
+
+    @PostMapping("/{childId}/quizzes/{quizId}/attempt")
+    @Operation(summary = "Submit quiz attempt on behalf of / for a child")
+    public ResponseEntity<ApiResponse<QuizResultResponse>> submitChildQuiz(
+            @PathVariable Long childId,
+            @PathVariable Long quizId,
+            @Valid @RequestBody QuizSubmitRequest request) {
+        User parent = securityUtils.getCurrentUser();
+        QuizResultResponse response = childService.submitQuizAttemptForParent(childId, quizId, request, parent);
+        return ResponseEntity.ok(ApiResponse.success("Quiz evaluated successfully", response));
+    }
+
+    @GetMapping("/{childId}/rewards")
+    @Operation(summary = "Get rewards for a child (parent view)")
+    public ResponseEntity<ApiResponse<List<RewardResponse>>> getChildRewards(@PathVariable Long childId) {
+        User parent = securityUtils.getCurrentUser();
+        return ResponseEntity.ok(ApiResponse.success(childService.getRewardsForParent(childId, parent)));
+    }
+
+    @GetMapping("/{childId}/progress")
+    @Operation(summary = "Get quiz progress for a child (parent view)")
+    public ResponseEntity<ApiResponse<List<QuizResultResponse>>> getChildProgress(@PathVariable Long childId) {
+        User parent = securityUtils.getCurrentUser();
+        return ResponseEntity.ok(ApiResponse.success(childService.getProgressForParent(childId, parent)));
     }
 }

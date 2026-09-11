@@ -22,7 +22,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -215,9 +214,134 @@ public class ChildServiceImpl implements ChildService {
 
     @Override
     @Transactional(readOnly = true)
-    public ChildDashboardResponse getChildDashboard(User user) {
-        ChildProfile child = resolveChildProfile(user);
+    public ChildDashboardResponse getChildDashboardForParent(Long childId, User parentUser) {
+        ChildProfile child = requireChildOwnedByParent(childId, parentUser);
+        return buildDashboard(child);
+    }
 
+    @Override
+    @Transactional
+    public void deleteChildGoal(Long childId, Long goalId, User parentUser) {
+        SavingsGoal goal = requireGoalOwnedByParent(childId, goalId, parentUser);
+        savingsGoalRepository.delete(goal);
+    }
+
+    @Override
+    @Transactional
+    public SavingsGoalResponse addGoalProgress(Long childId, Long goalId, BigDecimal amountToAdd, User parentUser) {
+        if (amountToAdd == null || amountToAdd.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BadRequestException("Amount to add must be greater than zero");
+        }
+        SavingsGoal goal = requireGoalOwnedByParent(childId, goalId, parentUser);
+        return applyGoalProgress(goal, amountToAdd);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<QuizResponse> getQuizzesForParent(Long childId, User parentUser) {
+        ChildProfile child = requireChildOwnedByParent(childId, parentUser);
+        return quizRepository.findAll().stream()
+                .map(q -> mapToQuizResponse(q, child))
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public QuizResponse getQuizByIdForParent(Long childId, Long quizId, User parentUser) {
+        ChildProfile child = requireChildOwnedByParent(childId, parentUser);
+        Quiz quiz = quizRepository.findById(quizId)
+                .orElseThrow(() -> new ResourceNotFoundException("Quiz", "id", quizId));
+        return mapToQuizResponse(quiz, child);
+    }
+
+    @Override
+    @Transactional
+    public QuizResultResponse submitQuizAttemptForParent(
+            Long childId, Long quizId, QuizSubmitRequest request, User parentUser) {
+        ChildProfile child = requireChildOwnedByParent(childId, parentUser);
+        return evaluateQuizAttempt(quizId, request, child);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<RewardResponse> getRewardsForParent(Long childId, User parentUser) {
+        ChildProfile child = requireChildOwnedByParent(childId, parentUser);
+        return rewardRepository.findByChildProfileOrderByUnlockedAtDesc(child)
+                .stream()
+                .map(this::mapToRewardResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<QuizResultResponse> getProgressForParent(Long childId, User parentUser) {
+        ChildProfile child = requireChildOwnedByParent(childId, parentUser);
+        return mapQuizHistory(child);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ChildDashboardResponse getChildDashboard(User user) {
+        ChildProfile child = requireLoggedInChildProfile(user);
+        return buildDashboard(child);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<QuizResponse> getAvailableQuizzes(User user) {
+        ChildProfile child = requireLoggedInChildProfile(user);
+        return quizRepository.findAll()
+                .stream()
+                .map(q -> mapToQuizResponse(q, child))
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public QuizResponse getQuizById(Long quizId) {
+        Quiz q = quizRepository.findById(quizId)
+                .orElseThrow(() -> new ResourceNotFoundException("Quiz", "id", quizId));
+        return mapToQuizResponse(q, null);
+    }
+
+    @Override
+    @Transactional
+    public QuizResultResponse submitQuizAttempt(Long quizId, QuizSubmitRequest request, User user) {
+        ChildProfile child = requireLoggedInChildProfile(user);
+        return evaluateQuizAttempt(quizId, request, child);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<RewardResponse> getChildRewards(User user) {
+        ChildProfile child = requireLoggedInChildProfile(user);
+        return rewardRepository.findByChildProfileOrderByUnlockedAtDesc(child)
+                .stream()
+                .map(this::mapToRewardResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<QuizResultResponse> getChildQuizHistory(User user) {
+        ChildProfile child = requireLoggedInChildProfile(user);
+        return mapQuizHistory(child);
+    }
+
+    @Override
+    @Transactional
+    public SavingsGoalResponse addOwnGoalProgress(Long goalId, BigDecimal amountToAdd, User childUser) {
+        if (amountToAdd == null || amountToAdd.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BadRequestException("Amount to add must be greater than zero");
+        }
+        ChildProfile child = requireLoggedInChildProfile(childUser);
+        SavingsGoal goal = savingsGoalRepository.findById(goalId)
+                .filter(g -> g.getChildProfile() != null && g.getChildProfile().getId().equals(child.getId()))
+                .orElseThrow(() -> new ResourceNotFoundException("SavingsGoal", "id", goalId));
+        return applyGoalProgress(goal, amountToAdd);
+    }
+
+    private ChildDashboardResponse buildDashboard(ChildProfile child) {
         List<SavingsGoalResponse> goals = savingsGoalRepository.findByChildProfile(child)
                 .stream()
                 .map(this::mapToGoalResponse)
@@ -246,28 +370,7 @@ public class ChildServiceImpl implements ChildService {
                 .build();
     }
 
-    @Override
-    @Transactional(readOnly = true)
-    public List<QuizResponse> getAvailableQuizzes(User user) {
-        ChildProfile child = resolveChildProfile(user);
-        return quizRepository.findAll()
-                .stream()
-                .map(q -> mapToQuizResponse(q, child))
-                .collect(Collectors.toList());
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public QuizResponse getQuizById(Long quizId) {
-        Quiz q = quizRepository.findById(quizId)
-                .orElseThrow(() -> new ResourceNotFoundException("Quiz", "id", quizId));
-        return mapToQuizResponse(q, null);
-    }
-
-    @Override
-    @Transactional
-    public QuizResultResponse submitQuizAttempt(Long quizId, QuizSubmitRequest request, User user) {
-        ChildProfile child = resolveChildProfile(user);
+    private QuizResultResponse evaluateQuizAttempt(Long quizId, QuizSubmitRequest request, ChildProfile child) {
         Quiz quiz = quizRepository.findById(quizId)
                 .orElseThrow(() -> new ResourceNotFoundException("Quiz", "id", quizId));
 
@@ -300,7 +403,6 @@ public class ChildServiceImpl implements ChildService {
                 .build();
         quizResultRepository.save(result);
 
-        // If passed, update total points and grant badge
         String earnedBadge = null;
         if (passed) {
             child.setTotalPoints(child.getTotalPoints() + earnedPoints);
@@ -333,20 +435,32 @@ public class ChildServiceImpl implements ChildService {
                 .build();
     }
 
-    @Override
-    @Transactional(readOnly = true)
-    public List<RewardResponse> getChildRewards(User user) {
-        ChildProfile child = resolveChildProfile(user);
-        return rewardRepository.findByChildProfileOrderByUnlockedAtDesc(child)
-                .stream()
-                .map(this::mapToRewardResponse)
-                .collect(Collectors.toList());
+    private SavingsGoalResponse applyGoalProgress(SavingsGoal goal, BigDecimal amountToAdd) {
+        goal.setCurrentAmount(goal.getCurrentAmount().add(amountToAdd));
+        ChildProfile child = goal.getChildProfile();
+        if (child != null) {
+            child.setCurrentSavings(child.getCurrentSavings().add(amountToAdd));
+            if (goal.getCurrentAmount().compareTo(goal.getTargetAmount()) >= 0
+                    && goal.getStatus() != GoalStatus.COMPLETED) {
+                goal.setStatus(GoalStatus.COMPLETED);
+                Reward reward = Reward.builder()
+                        .childProfile(child)
+                        .title("Goal Achieved: " + goal.getTitle())
+                        .description("Successfully reached savings goal of Rs." + goal.getTargetAmount())
+                        .badgeIcon("trophy_gold")
+                        .rewardType(RewardType.SAVINGS_MILESTONE)
+                        .pointsAwarded(100)
+                        .unlockedAt(LocalDateTime.now())
+                        .build();
+                rewardRepository.save(reward);
+                child.setTotalPoints(child.getTotalPoints() + 100);
+            }
+            childProfileRepository.save(child);
+        }
+        return mapToGoalResponse(savingsGoalRepository.save(goal));
     }
 
-    @Override
-    @Transactional(readOnly = true)
-    public List<QuizResultResponse> getChildQuizHistory(User user) {
-        ChildProfile child = resolveChildProfile(user);
+    private List<QuizResultResponse> mapQuizHistory(ChildProfile child) {
         return quizResultRepository.findByChildProfileOrderByCompletedAtDesc(child)
                 .stream()
                 .map(r -> QuizResultResponse.builder()
@@ -355,7 +469,9 @@ public class ChildServiceImpl implements ChildService {
                         .quizTitle(r.getQuiz().getTitle())
                         .score(r.getScore())
                         .totalQuestions(r.getTotalQuestions())
-                        .scorePercentage(r.getTotalQuestions() > 0 ? ((double) r.getScore() / r.getTotalQuestions()) * 100.0 : 0.0)
+                        .scorePercentage(r.getTotalQuestions() > 0
+                                ? ((double) r.getScore() / r.getTotalQuestions()) * 100.0
+                                : 0.0)
                         .passed(r.getPassed())
                         .earnedPoints(r.getEarnedPoints())
                         .completedAt(r.getCompletedAt())
@@ -363,30 +479,22 @@ public class ChildServiceImpl implements ChildService {
                 .collect(Collectors.toList());
     }
 
-    private ChildProfile resolveChildProfile(User user) {
-        // Check if user is child user
-        Optional<ChildProfile> asChild = childProfileRepository.findByChildUser(user);
-        if (asChild.isPresent()) {
-            return asChild.get();
-        }
+    private ChildProfile requireLoggedInChildProfile(User user) {
+        return childProfileRepository.findByChildUser(user)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Child profile not found for this account. Parents must use /api/v1/children/{childId}/... endpoints."));
+    }
 
-        // Else check if parent has a child profile
-        List<ChildProfile> forParent = childProfileRepository.findByParentUser(user);
-        if (!forParent.isEmpty()) {
-            return forParent.get(0);
-        }
+    private ChildProfile requireChildOwnedByParent(Long childId, User parentUser) {
+        return childProfileRepository.findByIdAndParentUser(childId, parentUser)
+                .orElseThrow(() -> new ResourceNotFoundException("ChildProfile", "id", childId));
+    }
 
-        // Auto-create a default child profile for the parent
-        ChildProfile defaultChild = ChildProfile.builder()
-                .parentUser(user)
-                .firstName("Alex")
-                .lastName("Silva")
-                .age(10)
-                .avatar("avatar_default.png")
-                .currentSavings(new BigDecimal("5000.00"))
-                .totalPoints(150)
-                .build();
-        return childProfileRepository.save(defaultChild);
+    private SavingsGoal requireGoalOwnedByParent(Long childId, Long goalId, User parentUser) {
+        requireChildOwnedByParent(childId, parentUser);
+        return savingsGoalRepository.findById(goalId)
+                .filter(g -> g.getChildProfile() != null && g.getChildProfile().getId().equals(childId))
+                .orElseThrow(() -> new ResourceNotFoundException("SavingsGoal", "id", goalId));
     }
 
     private ChildProfileResponse mapToProfileResponse(ChildProfile c) {
